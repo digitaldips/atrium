@@ -12,18 +12,30 @@ import {
   allTasks,
   canSee,
   commentsOf,
-  hydrateWorkspace,
   logAct,
   me,
   mem,
   proj,
   save,
+  startWorkspace,
+  syncDoc,
+  lastSyncError,
   task,
   tasksOf,
   visibleProjects,
 } from '../core/store.js';
 import { sb, getCurrentUser, setCurrentUser } from '../core/supabase.js';
-import { buildDocPayload, errMessage, markSyncFailure, signInWithPassword, signOutUser, signUp, upsertWorkspaceDoc } from '../core/workspace-api.js';
+import {
+  applyUserIdentity,
+  buildDocPayload,
+  errMessage,
+  markSyncFailure,
+  pushDocUpdate,
+  signInWithPassword,
+  signOutUser,
+  signUp,
+  upsertWorkspaceDoc,
+} from '../core/workspace-api.js';
 import { fileType, fsize } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
@@ -1777,6 +1789,15 @@ A.signOut = async () => {
   S.ui.palette = null;
   S.ui.drawer = null;
   S.ui.modals = [];
+  /* Persist any pending debounced edit before the cache is dropped: the
+     flush runs while the user is still set, so the last <=500ms of edits
+     reach the server instead of dying with the cache. */
+  try {
+    await syncDoc.flush();
+  } catch {
+    /* best effort: sign-out proceeds */
+  }
+  syncDoc.cancel();
   try {
     if (sb) await signOutUser(sb);
   } catch {
@@ -1801,43 +1822,45 @@ A.shortcuts = () => {
   S.ui.palette = null;
   openModal({ type: 'shortcuts' });
 };
-A.startOnboarding = () => {
-  S.ui.pop = null;
-  S.ui.auth = 'onboarding';
-  S.ui.onb = 0;
-  render();
-};
-A.toggleOffline = () => {
-  S.ui.offline = !S.ui.offline;
-  S.ui.pop = null;
-  render();
-  toast(S.ui.offline ? 'Offline mode on — edits will fail to save' : 'Back online', { kind: S.ui.offline ? 'err' : 'ok' });
-};
-A.retryOnline = el => {
-  el.classList.add('is-loading');
-  setTimeout(() => {
+/* The offline bar's "Try again" button: a REAL recovery attempt — flush the
+   pending debounced sync (or push directly) and report the result. No
+   faked success: while the server is unreachable the flag stays up. */
+A.retryOnline = async el => {
+  el?.classList.add('is-loading');
+  el?.setAttribute('aria-busy', 'true');
+  const res = await pushDocUpdate(sb, getCurrentUser(), S, D().ws?.name);
+  el?.classList.remove('is-loading');
+  el?.removeAttribute('aria-busy');
+  if (res === 'ok') {
+    render();
+    toast('Reconnected — all changes synced.');
+  } else if (res === 'skipped') {
+    /* Nothing to sync (no session): the flag was stale, clear it quietly. */
     S.ui.offline = false;
     render();
-    toast('Reconnected. All changes are synced.');
-  }, 700);
+  } else {
+    render();
+    toast("Still can't reach the server. Your edits are kept on this device and will sync when you're back online.", { kind: 'err', ms: 5000 });
+  }
 };
-A.resetDemo = () => {
-  S.ui.pop = null;
-  confirmDlg({
-    title: 'Reset demo data?',
-    body: 'All projects, tasks, and settings in this browser go back to the original sample workspace.',
-    ok: 'Reset data',
-    danger: true,
-    icon: 'rotate-ccw',
-    run: () => {
-      S.data = seed();
-      S.views = {};
-      S.prefs = { ...DEFAULT_PREFS, theme: S.prefs.theme };
-      S.ui.drawer = null;
-      save();
-      go('home');
-      toast('Demo data restored');
+/* Design-system gallery: the destructive dialogs, rendered exactly as in
+   the app but wired to a no-op run — confirming changes nothing. */
+A.demoDlg = el => {
+  const dlg = {
+    delProject: { title: 'Delete project?', body: 'This is a design-system preview. Nothing is deleted.', ok: 'Delete project', danger: true, icon: 'trash-2' },
+    delTask: { title: 'Delete task?', body: 'This is a design-system preview. Nothing is deleted.', ok: 'Delete task', danger: true, icon: 'trash-2' },
+    removeMember: {
+      title: 'Remove member?',
+      body: 'This is a design-system preview. Nobody is removed.',
+      ok: 'Remove member',
+      danger: true,
+      icon: 'user-minus',
     },
+    archiveProject: { title: 'Archive project?', body: 'This is a design-system preview. Nothing is archived.', ok: 'Archive project', icon: 'archive' },
+  }[el.dataset.v] || { title: 'Demo', body: 'Design-system preview.', ok: 'Continue' };
+  confirmDlg({
+    ...dlg,
+    run: () => toast('Demo only — nothing was changed', { kind: 'info' }),
   });
 };
 A.toastInfo = el => toast(el.dataset.msg, { kind: 'info' });
@@ -2139,7 +2162,15 @@ A.doLogin = async () => {
   btn?.setAttribute('aria-busy', 'true');
   try {
     const { session } = await signInWithPassword(sb, em, pw);
-    await hydrateWorkspace(session);
+    /* startWorkspace binds the cache to this user and loads their doc; it
+       fails closed (returns 'login') when the server is unreachable and
+       no trusted same-uid cache exists — no entering on seed data. */
+    if ((await startWorkspace(session)) === 'login') {
+      S.ui.errors.login = lastSyncError() || errMessage(new TypeError('Failed to fetch'));
+      render();
+      $('#l-pw').value = pw;
+      return;
+    }
     enterApp(`Signed in as ${em}`);
   } catch (err) {
     S.ui.errors.login = err.message;
@@ -2174,12 +2205,15 @@ A.doSignup = async () => {
   btn?.classList.add('is-loading');
   btn?.setAttribute('aria-busy', 'true');
   try {
-    const { session } = await signUp(sb, em, pw);
+    const { session } = await signUp(sb, em, pw, { data: { full_name: nm } });
     if (!session) throw new Error(errMessage({ code: 'email_not_confirmed' }));
     setCurrentUser(session.user.id);
     S.data = seed();
     S.views = {};
     S.prefs = { ...DEFAULT_PREFS };
+    /* The in-app identity matches the account from first render: the 'me'
+       member and prefs.name get the collected name + account email. */
+    applyUserIdentity(S, session.user);
     S.ui.errors = {};
     S.ui.pwNew = '';
     S.ui.auth = 'onboarding';
@@ -2261,10 +2295,25 @@ A.onbNext = el => {
   setTimeout(() => $('.auth input')?.focus(), 20);
 };
 A.onbExit = () => {
+  /* Onboarding is session-gated: with no account, exit goes to login,
+     never into the app. */
+  if (!sb || !getCurrentUser()) {
+    S.ui.auth = 'login';
+    render();
+    return;
+  }
   S.ui.auth = null;
   render();
 };
 A.onbFinish = async () => {
+  /* Session gate: finishing onboarding without a real account must not
+     enter the app (and there is no row to upsert the doc into). */
+  if (!sb || !getCurrentUser()) {
+    S.ui.auth = 'login';
+    S.ui.errors = {};
+    render();
+    return;
+  }
   const o = S.ui.onbData;
   let p;
   mutate(() => {
