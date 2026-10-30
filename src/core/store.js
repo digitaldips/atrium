@@ -2,8 +2,20 @@
 import { TODAY, diffD, iso, parse, uid } from './utils.js';
 import { PCOLORS, TEAMS_SEED } from './constants.js';
 import { seed } from '../data/seed.js';
+import { sb, getCurrentUser, setCurrentUser } from './supabase.js';
+import {
+  buildDocPayload,
+  isAuthedSession,
+  loadWorkspaceDoc,
+  makeDebouncedSync,
+  markSyncFailure,
+  needsBootstrap,
+  pushDocUpdate,
+  upsertWorkspaceDoc,
+  workspaceRowToDoc,
+} from './workspace-api.js';
 
-export const STORE_KEY = 'gr8r.v2';
+export const STORE_KEY = 'atrium.v1';
 export const DEFAULT_PREFS = {
   theme: 'system',
   accent: 'indigo',
@@ -83,6 +95,22 @@ export const S = {
   },
 };
 export let _saveT;
+/* Sync status toasts are set from main.js so core/ stays dependency-free
+   (core may not import ui/). */
+let syncHandlers = {};
+export function setSyncHandlers(h) {
+  syncHandlers = { ...syncHandlers, ...h };
+}
+/* Write-through sync: the localStorage write stays the offline cache; when
+   a session exists, the same {data,prefs,views} payload is debounced
+   (500ms, separate timer) into public.workspaces by owner_id. Supabase is
+   the source of truth, localStorage the cache. */
+export const syncDoc = makeDebouncedSync(async () => {
+  const wasOffline = S.ui.offline;
+  const ok = await pushDocUpdate(sb, getCurrentUser(), S, D().ws?.name);
+  if (!ok && !wasOffline) syncHandlers.onError?.();
+  else if (ok && wasOffline) syncHandlers.onRecover?.();
+}, 500);
 export function save() {
   clearTimeout(_saveT);
   _saveT = setTimeout(() => {
@@ -92,6 +120,36 @@ export function save() {
       /* storage full or blocked: keep working in memory */
     }
   }, 150);
+  syncDoc.schedule();
+}
+
+/* ---------- server hydration (session -> workspace doc) ---------- */
+/* Load the owner's workspace document from Postgres. Missing row:
+   bootstrap from seed and upsert immediately. Unreachable server: keep
+   the localStorage cache and flag offline. Returns 'loaded' |
+   'bootstrapped' | 'offline' | 'local'. */
+export async function hydrateWorkspace(session) {
+  if (!sb || !isAuthedSession(session)) return 'local';
+  setCurrentUser(session.user.id);
+  try {
+    const row = await loadWorkspaceDoc(sb, session.user.id);
+    if (needsBootstrap(row)) {
+      S.data = seed();
+      S.views = {};
+      S.prefs = { ...DEFAULT_PREFS };
+      await upsertWorkspaceDoc(sb, session.user.id, buildDocPayload(S.data, S.prefs, S.views), D().ws?.name);
+      return 'bootstrapped';
+    }
+    const doc = workspaceRowToDoc(row);
+    S.data = doc.data;
+    S.prefs = Object.assign({}, DEFAULT_PREFS, doc.prefs || {});
+    S.views = doc.views || {};
+    save();
+    return 'loaded';
+  } catch (err) {
+    markSyncFailure(S, err);
+    return 'offline';
+  }
 }
 
 /* ---------- lookups ---------- */
