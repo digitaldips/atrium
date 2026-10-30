@@ -145,7 +145,7 @@ export function pageSystem() {
 export function pageStates() {
   const card = (cap, icon, inner) => `<div class="panel"><div class="cap">${ic(icon, 13)}${cap}</div>${inner}</div>`;
   return `<div class="page wide" style="max-width:1240px">
-    <div class="ph"><div><h1>System states</h1><p>Empty, loading, error, and confirmation states used throughout Atrium.</p></div><div class="acts"><button class="btn btn-secondary" data-a="toggleOffline">${ic(S.ui.offline ? 'wifi' : 'wifi-off', 14)}${S.ui.offline ? 'Go back online' : 'Simulate offline'}</button></div></div>
+    <div class="ph"><div><h1>System states</h1><p>Empty, loading, error, and confirmation states used throughout Atrium.</p></div></div>
     <h2 class="sec" style="margin:8px 0 10px">Empty states</h2>
     <div class="states-grid">
       ${card('No projects', 'folder-kanban', empty('folder-kanban', 'No projects yet', 'Create your first project to start organizing your work.', `<button class="btn btn-primary btn-sm" data-a="newProject">${ic('plus', 14)}Create project</button>`))}
@@ -170,7 +170,7 @@ export function pageStates() {
       ${card('Form validation', 'text-cursor-input', `<div style="padding:18px" class="col"><div class="field"><label class="label" for="st-e">Email</label><input class="input is-error" id="st-e" value="hello@atrium.app" aria-invalid="true"><span class="err">${ic('circle-alert', 12)}Enter a valid email, like name@company.com</span></div></div>`)}
     </div>
     <h2 class="sec" style="margin:28px 0 10px">Confirmation dialogs</h2>
-    <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn btn-secondary" data-a="delProject" data-id="p5" data-demo="1">${ic('trash-2', 14)}Delete project</button><button class="btn btn-secondary" data-a="delTask" data-id="t10" data-demo="1">${ic('trash-2', 14)}Delete task</button><button class="btn btn-secondary" data-a="removeMember" data-id="m8" data-demo="1">${ic('user-minus', 14)}Remove member</button><button class="btn btn-secondary" data-a="archiveProject" data-id="p7" data-demo="1">${ic('archive', 14)}Archive project</button></div>
-    <p class="faint" style="font-size:12.5px;margin-top:8px">These open the real dialogs. Confirming performs the action on demo data; use Help → Reset demo data to restore.</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn btn-secondary" data-a="demoDlg" data-v="delProject">${ic('trash-2', 14)}Delete project</button><button class="btn btn-secondary" data-a="demoDlg" data-v="delTask">${ic('trash-2', 14)}Delete task</button><button class="btn btn-secondary" data-a="demoDlg" data-v="removeMember">${ic('user-minus', 14)}Remove member</button><button class="btn btn-secondary" data-a="demoDlg" data-v="archiveProject">${ic('archive', 14)}Archive project</button></div>
+    <p class="faint" style="font-size:12.5px;margin-top:8px">These open the destructive dialogs as they appear in the app; confirming changes nothing on your real workspace.</p>
   </div>`;
 }
