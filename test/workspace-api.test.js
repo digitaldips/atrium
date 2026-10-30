@@ -169,8 +169,16 @@ test('signInWithPassword returns the session data or throws mapped errors', asyn
 
 test('signUp returns signup data and surfaces already-registered errors', async () => {
   const good = fakeClient({});
-  const res = await signUp(good, 'a@b.co', 'pw123456789');
+  const res = await signUp(good, 'a@b.co', 'pw123456789', { data: { full_name: 'Test Person' } });
   assert.equal(res.session.user.id, 'u1');
+  assert.deepEqual(
+    good.calls.auth[0],
+    ['signUp', { email: 'a@b.co', password: 'pw123456789', options: { data: { full_name: 'Test Person' } } }],
+    'the collected name must reach auth user_metadata',
+  );
+  const bare = fakeClient({});
+  await signUp(bare, 'a@b.co', 'pw123456789');
+  assert.deepEqual(bare.calls.auth[0], ['signUp', { email: 'a@b.co', password: 'pw123456789', options: {} }]);
   const taken = fakeClient({ authHandlers: { signUp: () => ({ data: null, error: { code: 'user_already_exists', message: 'User already registered' } }) } });
   await assert.rejects(() => signUp(taken, 'a@b.co', 'pw123456789'), /already exists/);
 });

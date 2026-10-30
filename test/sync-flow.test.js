@@ -71,7 +71,7 @@ test('pushDocUpdate with a working client upserts the whole doc and stays online
   const client = fakeClient();
   const S = mkS();
   const ok = await pushDocUpdate(client, 'user-1', S, 'Atrium');
-  assert.equal(ok, true);
+  assert.equal(ok, 'ok', 'the sync callback contract distinguishes ok/failed/skipped');
   assert.equal(S.ui.offline, false);
   assert.equal(client.upserts.length, 1);
   assert.deepEqual(client.upserts[0].opts, { onConflict: 'owner_id' });
@@ -82,7 +82,7 @@ test('pushDocUpdate offline fallback: a failing client flips S.ui.offline instea
   const client = fakeClient({ upsertErr: { message: 'Failed to fetch' } });
   const S = mkS();
   const ok = await pushDocUpdate(client, 'user-1', S);
-  assert.equal(ok, false, 'sync reports failure without throwing');
+  assert.equal(ok, 'failed', 'sync reports failure without throwing');
   assert.equal(S.ui.offline, true, 'the offline flag is set so the UI can say so');
 });
 
@@ -96,11 +96,11 @@ test('pushDocUpdate recovery: a later successful sync clears the offline flag', 
   assert.equal(S.ui.offline, false);
 });
 
-test('pushDocUpdate no-ops without a client or user id (prototype/local-only mode)', async () => {
+test('pushDocUpdate reports "skipped" — not "failed" — without a client or user id', async () => {
   const client = fakeClient();
   const S = mkS();
-  assert.equal(await pushDocUpdate(null, 'user-1', S), false);
-  assert.equal(await pushDocUpdate(client, null, S), false);
+  assert.equal(await pushDocUpdate(null, 'user-1', S), 'skipped', 'no client: a skip, never an offline failure');
+  assert.equal(await pushDocUpdate(client, null, S), 'skipped', 'no user (e.g. a pending sync after sign-out): a skip');
   assert.equal(client.upserts.length, 0, 'nothing hits the network');
-  assert.equal(S.ui.offline, false, 'local-only mode is not an offline failure');
+  assert.equal(S.ui.offline, false, 'a skipped sync must not flip the offline flag or raise an error toast');
 });
