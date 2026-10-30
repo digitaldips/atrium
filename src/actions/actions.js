@@ -4,7 +4,26 @@
 import { $, $$, TODAY, addD, dOff, esc, fmtDate, iso, parse, uid } from '../core/utils.js';
 import { PR, PSTAT, ST } from '../core/constants.js';
 import { seed } from '../data/seed.js';
-import { D, DEFAULT_PREFS, S, allTasks, canSee, commentsOf, logAct, me, mem, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
+import {
+  D,
+  DEFAULT_PREFS,
+  S,
+  STORE_KEY,
+  allTasks,
+  canSee,
+  commentsOf,
+  hydrateWorkspace,
+  logAct,
+  me,
+  mem,
+  proj,
+  save,
+  task,
+  tasksOf,
+  visibleProjects,
+} from '../core/store.js';
+import { sb, getCurrentUser, setCurrentUser } from '../core/supabase.js';
+import { buildDocPayload, errMessage, markSyncFailure, signInWithPassword, signOutUser, signUp, upsertWorkspaceDoc } from '../core/workspace-api.js';
 import { fileType, fsize } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
@@ -462,7 +481,7 @@ A.copyLink = el => {
           : d.id && proj(d.id)
             ? `project/${proj(d.id).key.toLowerCase()}`
             : '';
-  copy(`https://gr8rstudio.com/${D().ws.url}/${path}`);
+  copy(`https://atrium.app/${D().ws.url}/${path}`);
 };
 A.copyText = el => copy(el.dataset.text, 'Copied to clipboard');
 A.copyEmail = el => {
@@ -1550,7 +1569,7 @@ A.submitInvite = () => {
     toast(`${list.length} invitation${list.length > 1 ? 's' : ''} sent`);
   });
 };
-A.copyInviteLink = () => copy(`https://gr8rstudio.com/join/${D().ws.url}-7f3k2`, 'Invite link copied');
+A.copyInviteLink = () => copy(`https://atrium.app/join/${D().ws.url}-7f3k2`, 'Invite link copied');
 A.resendInvite = el => {
   S.ui.pop = null;
   render();
@@ -1753,13 +1772,28 @@ A.newWorkspace = () => {
   S.ui.onbData.url = '';
   render();
 };
-A.signOut = () => {
+A.signOut = async () => {
   S.ui.pop = null;
   S.ui.palette = null;
   S.ui.drawer = null;
   S.ui.modals = [];
-  S.ui.auth = 'login';
+  try {
+    if (sb) await signOutUser(sb);
+  } catch {
+    /* session already gone server-side: sign out locally anyway */
+  }
+  setCurrentUser(null);
+  try {
+    localStorage.removeItem(STORE_KEY);
+  } catch {
+    /* storage blocked */
+  }
+  S.data = seed();
+  S.views = {};
+  S.prefs = { ...DEFAULT_PREFS };
+  S.ui.offline = false;
   S.ui.errors = {};
+  S.ui.auth = 'login';
   render();
 };
 A.shortcuts = () => {
@@ -2081,7 +2115,7 @@ export function enterApp(msg) {
   go(S.prefs.home || 'home');
   toast(msg);
 }
-A.doLogin = () => {
+A.doLogin = async () => {
   const e = (S.ui.errors = {});
   const em = $('#l-email').value.trim(),
     pw = $('#l-pw').value;
@@ -2095,13 +2129,28 @@ A.doLogin = () => {
     if (!e.email) $('#l-pw').value = pw;
     return;
   }
-  loadingBtn('login-btn', 750, () => enterApp(`Signed in as ${em}`));
+  if (!sb) {
+    e.login = 'This build has no backend configured.';
+    render();
+    return;
+  }
+  const btn = $('#login-btn');
+  btn?.classList.add('is-loading');
+  btn?.setAttribute('aria-busy', 'true');
+  try {
+    const { session } = await signInWithPassword(sb, em, pw);
+    await hydrateWorkspace(session);
+    enterApp(`Signed in as ${em}`);
+  } catch (err) {
+    S.ui.errors.login = err.message;
+    render();
+    $('#l-pw').value = pw;
+  } finally {
+    btn?.classList.remove('is-loading');
+    btn?.removeAttribute('aria-busy');
+  }
 };
-A.socialAuth = el => {
-  el.classList.add('is-loading');
-  setTimeout(() => enterApp(`Signed in with ${el.dataset.v}`), 800);
-};
-A.doSignup = () => {
+A.doSignup = async () => {
   const e = (S.ui.errors = {});
   const nm = $('#s-name').value.trim(),
     em = $('#s-email').value.trim(),
@@ -2116,68 +2165,36 @@ A.doSignup = () => {
     $('#s-email').value = em;
     return;
   }
-  loadingBtn('signup-btn', 800, () => {
-    S.ui.auth = 'verify';
-    startResend();
-    render();
-  });
-};
-export function startResend() {
-  S.ui.resendT = 30;
-  clearInterval(startResend._i);
-  startResend._i = setInterval(() => {
-    S.ui.resendT--;
-    const el = $('#resend-t');
-    if (el) el.textContent = S.ui.resendT;
-    if (S.ui.resendT <= 0) {
-      clearInterval(startResend._i);
-      if (S.ui.auth === 'verify') render();
-    }
-  }, 1000);
-}
-A.resend = el => {
-  if (el.dataset.v === 'verify') {
-    startResend();
-    render();
-    toast(`Verification email sent to ${S.ui.af.email}`);
-  } else toast(`Reset link sent to ${S.ui.af.email}`);
-};
-A.verified = () => {
-  S.ui.auth = 'onboarding';
-  S.ui.onb = 0;
-  S.ui.onbData.ws = '';
-  S.ui.onbData.url = '';
-  render();
-};
-A.doForgot = () => {
-  const em = $('#f-email').value.trim();
-  S.ui.af.email = em;
-  S.ui.errors = {};
-  if (!EMAIL_RE.test(em)) {
-    S.ui.errors.email = 'Enter the email you use to sign in';
+  if (!sb) {
+    e.signup = 'This build has no backend configured.';
     render();
     return;
   }
-  loadingBtn('forgot-btn', 700, () => {
-    S.ui.auth = 'forgot-sent';
-    render();
-  });
-};
-A.doReset = () => {
-  const a = $('#r-pw').value,
-    b = $('#r-pw2').value;
-  const e = (S.ui.errors = {});
-  if (a.length < 10 || !/[0-9\W]/.test(a)) e.pw = 'Use at least 10 characters, including a number or symbol';
-  if (a !== b) e.pw2 = "Passwords don't match";
-  if (Object.keys(e).length) {
-    render();
-    return;
-  }
-  loadingBtn('reset-btn', 700, () => {
-    S.ui.auth = 'reset-done';
+  const btn = $('#signup-btn');
+  btn?.classList.add('is-loading');
+  btn?.setAttribute('aria-busy', 'true');
+  try {
+    const { session } = await signUp(sb, em, pw);
+    if (!session) throw new Error(errMessage({ code: 'email_not_confirmed' }));
+    setCurrentUser(session.user.id);
+    S.data = seed();
+    S.views = {};
+    S.prefs = { ...DEFAULT_PREFS };
+    S.ui.errors = {};
     S.ui.pwNew = '';
+    S.ui.auth = 'onboarding';
+    S.ui.onb = 0;
+    S.ui.onbData.ws = '';
+    S.ui.onbData.url = '';
     render();
-  });
+  } catch (err) {
+    if (/already exists/i.test(err.message)) e.email = err.message;
+    else e.signup = err.message;
+    render();
+  } finally {
+    btn?.classList.remove('is-loading');
+    btn?.removeAttribute('aria-busy');
+  }
 };
 
 /* onboarding */
@@ -2247,7 +2264,7 @@ A.onbExit = () => {
   S.ui.auth = null;
   render();
 };
-A.onbFinish = () => {
+A.onbFinish = async () => {
   const o = S.ui.onbData;
   let p;
   mutate(() => {
@@ -2287,6 +2304,15 @@ A.onbFinish = () => {
         }),
       );
   });
+  /* Persist the finished workspace before entering: first upsert of the doc. */
+  if (sb && getCurrentUser()) {
+    try {
+      await upsertWorkspaceDoc(sb, getCurrentUser(), buildDocPayload(S.data, S.prefs, S.views), D().ws.name);
+    } catch (err) {
+      markSyncFailure(S, err);
+      toast("Your workspace couldn't be saved to the server yet — it will sync automatically.", { kind: 'err', ms: 5000 });
+    }
+  }
   S.ui.auth = null;
   go('project', { id: p.id, tab: S.prefs.defaultTab });
   toast(`Welcome to ${D().ws.name}`);

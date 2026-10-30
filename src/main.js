@@ -54,11 +54,17 @@ import './features/archive.js';
 import './actions/teams.js';
 import './actions/subtasks.js';
 import './actions/archive.js';
-import { S, D } from './core/store.js';
+import { S, D, hydrateWorkspace, setSyncHandlers } from './core/store.js';
 import { A } from './actions/actions.js';
 import { ROUTE_NAMES, render, go } from './shell/render.js';
+import { toast } from './ui/toast.js';
+import { sb, supabaseConfigured } from './core/supabase.js';
+import { isAuthedSession } from './core/workspace-api.js';
 
-(function init() {
+/* Boot: a real Supabase session gates the app. Signed in -> load the
+   workspace document from Postgres (bootstrap from seed on first login),
+   else show the login screen. */
+async function init() {
   document.documentElement.lang = 'en';
   if (!document.getElementById('sr-live')) {
     const l = document.createElement('div');
@@ -68,12 +74,24 @@ import { ROUTE_NAMES, render, go } from './shell/render.js';
     document.body.appendChild(l);
   }
   const h = (location.hash || '').slice(1);
-  const authRoutes = ['login', 'signup', 'forgot', 'reset', 'verify', 'onboarding'];
-  if (authRoutes.includes(h)) S.ui.auth = h;
-  else if (h && ROUTE_NAMES[h]) S.ui.route = h;
-  else S.ui.route = S.prefs.home || 'home';
+  const authRoutes = ['login', 'signup', 'onboarding'];
+  const session = supabaseConfigured ? (await sb.auth.getSession()).data?.session : null;
+  if (isAuthedSession(session)) {
+    const routeHash = h && ROUTE_NAMES[h] ? h : null;
+    await hydrateWorkspace(session);
+    S.ui.route = routeHash || S.prefs.home || 'home';
+  } else {
+    S.ui.auth = authRoutes.includes(h) ? h : 'login';
+  }
   render();
-})();
+}
+init();
+
+/* Sync failures surface as toasts; the S.ui.offline flag drives in-app states. */
+setSyncHandlers({
+  onError: () => toast("Changes couldn't reach the server — you're offline. Edits stay on this device.", { kind: 'err', ms: 6000 }),
+  onRecover: () => toast('Back online — changes synced.'),
+});
 
 // Dev-only handle for debugging and screenshot tooling; stripped from production builds.
-if (import.meta.env.DEV) window.__gr8r = { S, D, A, go, render };
+if (import.meta.env.DEV) window.__atrium = { S, D, A, go, render, sb };
