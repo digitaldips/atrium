@@ -4,4 +4,7 @@ dist/
 .DS_Store
 __MACOSX/
 *.log
-.env*
+.env
+.env.local
+.env.*.local
+!.env.example
