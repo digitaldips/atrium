@@ -53,6 +53,55 @@ export function isAuthedSession(session) {
   return !!(session && session.user && session.user.id);
 }
 
+/* ---------- auth route gate ---------- */
+
+/* Which auth screen may render for a given requested route and session
+   user id. Onboarding is a session-only route: an unauthenticated visitor
+   (no matter what the URL hash says) is bounced to the login screen. */
+export function resolveAuthRoute(requested, userId) {
+  if (requested === 'onboarding' && !userId) return 'login';
+  return requested;
+}
+
+/* ---------- localStorage cache binding ---------- */
+
+/* Cache invariant: the localStorage workspace cache is trusted ONLY when
+   it was written by the same signed-in user (uid). A cache without a uid
+   or with a different uid is another account's workspace — it must never
+   be rendered, edited, or synced. store.js stamps uid on every save() and
+   discards untrusted caches at boot/login (bindCacheToUser). */
+
+export function cachePayloadForUser(uid, payload) {
+  return { ...payload, uid: uid || null };
+}
+
+/* True only when `cached` is a usable document written by `userId`. */
+export function isTrustedCache(cached, userId) {
+  return !!(cached && userId && cached.uid === userId && cached.data && Array.isArray(cached.data.tasks));
+}
+
+/* ---------- identity ---------- */
+
+/* Mirror the authenticated account onto the workspace's own identity:
+   the 'me' seed member gets the real name+email and prefs.name gets the
+   real name, so the in-app identity matches the account from first
+   render. Applied at signup and at bootstrap (fresh row); an existing
+   synced doc keeps whatever identity the user chose in-app. */
+export function applyUserIdentity(S, user) {
+  if (!S || !user) return false;
+  const email = user.email || '';
+  const metaName = user.user_metadata?.full_name || user.user_metadata?.name || '';
+  const fallback = email.split('@')[0].replace(/\b\w/g, c => c.toUpperCase());
+  const name = metaName || fallback || 'You';
+  const meRow = S.data?.members?.find(m => m.id === S.data?.me);
+  if (meRow) {
+    meRow.name = name;
+    meRow.email = email;
+  }
+  if (S.prefs) S.prefs.name = name;
+  return !!(meRow || S.prefs);
+}
+
 /* ---------- workspace document API (client passed in) ---------- */
 
 /* SELECT the owner's workspace row, or null when they have none. */
@@ -87,8 +136,8 @@ export async function signInWithPassword(client, email, password) {
   return data;
 }
 
-export async function signUp(client, email, password) {
-  const { data, error } = await client.auth.signUp({ email, password });
+export async function signUp(client, email, password, options = {}) {
+  const { data, error } = await client.auth.signUp({ email, password, options });
   if (error) throw new Error(errMessage(error));
   return data;
 }
@@ -100,18 +149,20 @@ export async function signOutUser(client) {
 
 /* ---------- write-through sync ---------- */
 
-/* One sync step: upsert the current doc triple. Returns true on success,
-   false on failure or in local-only mode — never throws. On failure the
-   caller's S.ui.offline flag is set so the UI can say so. */
+/* One sync step: upsert the current doc triple. Returns 'ok' on success,
+   'failed' on failure, and 'skipped' in local-only mode (no client or no
+   signed-in user, e.g. a debounce that outlived a sign-out) — never
+   throws. Callers must treat 'skipped' as a no-op, NOT as an error: only
+   'failed' sets the caller's S.ui.offline flag so the UI can say so. */
 export async function pushDocUpdate(client, userId, S, name) {
-  if (!client || !userId) return false;
+  if (!client || !userId) return 'skipped';
   try {
     await upsertWorkspaceDoc(client, userId, buildDocPayload(S.data, S.prefs, S.views), name);
     markSyncSuccess(S);
-    return true;
+    return 'ok';
   } catch (err) {
     markSyncFailure(S, err);
-    return false;
+    return 'failed';
   }
 }
 

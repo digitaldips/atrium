@@ -54,16 +54,17 @@ import './features/archive.js';
 import './actions/teams.js';
 import './actions/subtasks.js';
 import './actions/archive.js';
-import { S, D, hydrateWorkspace, setSyncHandlers } from './core/store.js';
+import { S, D, flushPendingSync, lastSyncError, setSyncHandlers, startWorkspace } from './core/store.js';
 import { A } from './actions/actions.js';
 import { ROUTE_NAMES, render, go } from './shell/render.js';
 import { toast } from './ui/toast.js';
 import { sb, supabaseConfigured } from './core/supabase.js';
-import { isAuthedSession } from './core/workspace-api.js';
+import { isAuthedSession, resolveAuthRoute } from './core/workspace-api.js';
 
 /* Boot: a real Supabase session gates the app. Signed in -> load the
    workspace document from Postgres (bootstrap from seed on first login),
-   else show the login screen. */
+   else show the login screen. #onboarding is a session-only route: an
+   unauthenticated visitor lands on login no matter the hash. */
 async function init() {
   document.documentElement.lang = 'en';
   if (!document.getElementById('sr-live')) {
@@ -78,20 +79,34 @@ async function init() {
   const session = supabaseConfigured ? (await sb.auth.getSession()).data?.session : null;
   if (isAuthedSession(session)) {
     const routeHash = h && ROUTE_NAMES[h] ? h : null;
-    await hydrateWorkspace(session);
+    if ((await startWorkspace(session)) === 'login') {
+      /* Fail closed: server unreachable and no trusted cache of our own. */
+      S.ui.auth = 'login';
+      S.ui.errors = { login: lastSyncError() };
+      render();
+      return;
+    }
     S.ui.route = routeHash || S.prefs.home || 'home';
   } else {
-    S.ui.auth = authRoutes.includes(h) ? h : 'login';
+    S.ui.auth = resolveAuthRoute(authRoutes.includes(h) ? h : 'login', null);
   }
   render();
 }
 init();
 
-/* Sync failures surface as toasts; the S.ui.offline flag drives in-app states. */
-setSyncHandlers({
-  onError: () => toast("Changes couldn't reach the server — you're offline. Edits stay on this device.", { kind: 'err', ms: 6000 }),
-  onRecover: () => toast('Back online — changes synced.'),
+/* Flush the pending debounced sync when the tab is hidden or closing so
+   the last edit inside the 500ms window still reaches the server. */
+window.addEventListener('pagehide', flushPendingSync);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushPendingSync();
 });
 
+/* Sync failures surface as toasts; the S.ui.offline flag drives in-app states.
+   Edits keep applying locally (see mutate()) and converge once reachable. */
+setSyncHandlers({
+  onError: () =>
+    toast("Changes couldn't reach the server — your edits are kept on this device and will sync when you're back online.", { kind: 'err', ms: 6000 }),
+  onRecover: () => toast('Back online — changes synced.'),
+});
 // Dev-only handle for debugging and screenshot tooling; stripped from production builds.
 if (import.meta.env.DEV) window.__atrium = { S, D, A, go, render, sb };

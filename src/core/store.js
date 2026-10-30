@@ -4,8 +4,11 @@ import { PCOLORS, TEAMS_SEED } from './constants.js';
 import { seed } from '../data/seed.js';
 import { sb, getCurrentUser, setCurrentUser } from './supabase.js';
 import {
+  applyUserIdentity,
   buildDocPayload,
+  cachePayloadForUser,
   isAuthedSession,
+  isTrustedCache,
   loadWorkspaceDoc,
   makeDebouncedSync,
   markSyncFailure,
@@ -31,6 +34,12 @@ export const DEFAULT_PREFS = {
   name: 'Tanjim Islam',
   title: 'Head of Product',
 };
+/* ---------- offline cache (localStorage) ---------- */
+/* Invariant: the cache at STORE_KEY belongs to exactly one account — the
+   uid stamped by save() from getCurrentUser(). It is trusted only when
+   that uid matches the signed-in user (isTrustedCache); a cache from
+   another account, or from before uid binding, is discarded at
+   boot/login (bindCacheToUser) and never rendered or synced. */
 export function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
@@ -107,15 +116,18 @@ export function setSyncHandlers(h) {
    the source of truth, localStorage the cache. */
 export const syncDoc = makeDebouncedSync(async () => {
   const wasOffline = S.ui.offline;
-  const ok = await pushDocUpdate(sb, getCurrentUser(), S, D().ws?.name);
-  if (!ok && !wasOffline) syncHandlers.onError?.();
-  else if (ok && wasOffline) syncHandlers.onRecover?.();
+  const res = await pushDocUpdate(sb, getCurrentUser(), S, D().ws?.name);
+  if (res === 'failed' && !wasOffline) syncHandlers.onError?.();
+  else if (res === 'ok' && wasOffline) syncHandlers.onRecover?.();
 }, 500);
 export function save() {
   clearTimeout(_saveT);
   _saveT = setTimeout(() => {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ data: S.data, prefs: S.prefs, views: S.views, collapsed: S.ui.collapsed }));
+      localStorage.setItem(
+        STORE_KEY,
+        JSON.stringify(cachePayloadForUser(getCurrentUser(), { data: S.data, prefs: S.prefs, views: S.views, collapsed: S.ui.collapsed })),
+      );
     } catch {
       /* storage full or blocked: keep working in memory */
     }
@@ -123,11 +135,41 @@ export function save() {
   syncDoc.schedule();
 }
 
+/* ---------- cache-uid binding ---------- */
+/* The cache S was initialised from at module load. bindCacheToUser is
+   called once a real session user is known (boot and explicit login):
+   the in-memory state is trusted only when the cache was written by that
+   same user; otherwise S is reset to seed and the foreign cache dropped. */
+export function bindCacheToUser(userId) {
+  if (isTrustedCache(saved, userId)) return true;
+  S.data = seed();
+  S.views = {};
+  S.prefs = { ...DEFAULT_PREFS };
+  try {
+    localStorage.removeItem(STORE_KEY);
+  } catch {
+    /* storage blocked */
+  }
+  return false;
+}
+/* Flush the pending debounced sync right now (pagehide/tab-close). With a
+   signed-in user it pushes the latest doc (best effort — the fetch is
+   fired, not awaited); without one the timer is dropped cleanly. */
+export function flushPendingSync() {
+  if (!getCurrentUser()) {
+    syncDoc.cancel();
+    return;
+  }
+  syncDoc.flush();
+}
+
 /* ---------- server hydration (session -> workspace doc) ---------- */
 /* Load the owner's workspace document from Postgres. Missing row:
-   bootstrap from seed and upsert immediately. Unreachable server: keep
-   the localStorage cache and flag offline. Returns 'loaded' |
-   'bootstrapped' | 'offline' | 'local'. */
+   bootstrap from seed (with the account's real identity) and upsert
+   immediately. Unreachable server: keep the localStorage cache and flag
+   offline. Returns 'loaded' | 'bootstrapped' | 'offline' | 'local'. */
+let lastHydrateError = null;
+export const lastSyncError = () => lastHydrateError;
 export async function hydrateWorkspace(session) {
   if (!sb || !isAuthedSession(session)) return 'local';
   setCurrentUser(session.user.id);
@@ -137,7 +179,9 @@ export async function hydrateWorkspace(session) {
       S.data = seed();
       S.views = {};
       S.prefs = { ...DEFAULT_PREFS };
+      applyUserIdentity(S, session.user);
       await upsertWorkspaceDoc(sb, session.user.id, buildDocPayload(S.data, S.prefs, S.views), D().ws?.name);
+      save();
       return 'bootstrapped';
     }
     const doc = workspaceRowToDoc(row);
@@ -147,9 +191,32 @@ export async function hydrateWorkspace(session) {
     save();
     return 'loaded';
   } catch (err) {
-    markSyncFailure(S, err);
+    lastHydrateError = markSyncFailure(S, err);
     return 'offline';
   }
+}
+
+/* ---------- session -> workspace, shared by boot and explicit login ---------- */
+/* Binds the localStorage cache to this user, then loads (or bootstraps)
+   the server doc. Returns 'app' when the user may enter, or 'login' when
+   we fail closed: the server was unreachable AND there is no trusted
+   same-uid cache, so there is nothing of the user's own to work on —
+   entering on seed data would let ~30 write paths build a doc that the
+   debounced sync would later push over their real server document. */
+export async function startWorkspace(session) {
+  if (!sb || !isAuthedSession(session)) return 'login';
+  const trusted = bindCacheToUser(session.user.id);
+  const outcome = await hydrateWorkspace(session);
+  if (outcome !== 'offline') return 'app';
+  if (trusted) return 'app'; /* the cache is this user's own doc: enter offline */
+  /* Fail closed: stay on the login screen with an honest error. */
+  syncDoc.cancel();
+  setCurrentUser(null);
+  S.ui.offline = false;
+  S.data = seed();
+  S.views = {};
+  S.prefs = { ...DEFAULT_PREFS };
+  return 'login';
 }
 
 /* ---------- lookups ---------- */

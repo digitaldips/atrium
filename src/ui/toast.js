@@ -1,7 +1,7 @@
 /* ---------- toasts ---------- */
 import { $, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { S, save } from '../core/store.js';
+import { save } from '../core/store.js';
 import { render } from '../shell/render.js';
 
 export function toast(msg, opt = {}) {
@@ -25,12 +25,11 @@ export function toast(msg, opt = {}) {
   host.appendChild(el);
   setTimeout(kill, opt.ms || 4200);
 }
-/* guarded mutation: simulates offline failures for the "Failed to save" state */
-export function mutate(fn, label) {
-  if (S.ui.offline) {
-    toast("Your changes couldn't be saved. You're offline.", { kind: 'err', action: 'Try again', onAction: () => mutate(fn, label) });
-    return false;
-  }
+/* Every edit applies locally and is queued for sync: while the server is
+   unreachable, save() keeps the localStorage cache current and the
+   debounced write-through sync converges once the connection is back.
+   Writes are never refused while flagged offline. */
+export function mutate(fn) {
   fn();
   save();
   render();

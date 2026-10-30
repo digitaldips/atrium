@@ -3,6 +3,8 @@
    ===================================================================== */
 import { $, $$ } from '../core/utils.js';
 import { D, S, mem, proj, team } from '../core/store.js';
+import { getCurrentUser } from '../core/supabase.js';
+import { resolveAuthRoute } from '../core/workspace-api.js';
 import { applyPrefs } from '../core/theme.js';
 import { enhanceSelects, selectMenu } from '../ui/select.js';
 import { renderShell } from './layout.js';
@@ -150,6 +152,10 @@ export function render() {
     /* not supported here; safe to skip */
   }
   const keep = $$('[data-keep]').map(el => [el.dataset.keep, el.scrollTop, el.scrollLeft]);
+  /* Auth gate: the onboarding wizard is a session-only route — an
+     unauthenticated visitor is bounced to login no matter the URL hash
+     or which code path set S.ui.auth. */
+  S.ui.auth = resolveAuthRoute(S.ui.auth, getCurrentUser());
   $('#app').innerHTML = S.ui.auth ? renderAuth() : renderShell();
   $('#layer').innerHTML = renderLayer();
   makeFocusable();
