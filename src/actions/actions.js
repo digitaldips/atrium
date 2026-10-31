@@ -17,25 +17,13 @@ import {
   mem,
   proj,
   save,
-  startWorkspace,
   syncDoc,
-  lastSyncError,
   task,
   tasksOf,
   visibleProjects,
 } from '../core/store.js';
 import { sb, getCurrentUser, setCurrentUser } from '../core/supabase.js';
-import {
-  applyUserIdentity,
-  buildDocPayload,
-  errMessage,
-  markSyncFailure,
-  pushDocUpdate,
-  signInWithPassword,
-  signOutUser,
-  signUp,
-  upsertWorkspaceDoc,
-} from '../core/workspace-api.js';
+import { buildDocPayload, markSyncFailure, pushDocUpdate, signInWithGoogle, signOutUser, upsertWorkspaceDoc } from '../core/workspace-api.js';
 import { fileType, fsize } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
@@ -2114,122 +2102,35 @@ A.changePlan = el => {
 };
 
 /* auth */
-A.auth = el => {
-  S.ui.auth = el.dataset.v;
-  S.ui.errors = {};
-  S.ui.pwNew = '';
-  render();
-  setTimeout(() => $('.auth input')?.focus(), 20);
-};
-A.toggleShowPw = () => {
-  const v = $('#l-pw')?.value;
-  S.ui.showPw = !S.ui.showPw;
-  render();
-  const i = $('#l-pw');
-  if (i) {
-    i.value = v;
-    i.focus();
-  }
-};
-export const EMAIL_RE = /^\S+@\S+\.\S+$/;
-export function enterApp(msg) {
-  S.ui.auth = null;
-  S.ui.errors = {};
-  go(S.prefs.home || 'home');
-  toast(msg);
-}
-A.doLogin = async () => {
+/* Google-only sign-in (Operance contract). On success the browser is
+   redirected to Google; on return the app boots fresh and the existing
+   session boot path (main.js init -> startWorkspace) hydrates or
+   bootstraps the workspace, applying the Google identity. A provider
+   error (e.g. no Google provider configured on the backend) surfaces in
+   the existing login alert slot. */
+A.doGoogleSignIn = async () => {
   const e = (S.ui.errors = {});
-  const em = $('#l-email').value.trim(),
-    pw = $('#l-pw').value;
-  S.ui.af.email = em;
-  if (!em) e.email = 'Enter your email address';
-  else if (!EMAIL_RE.test(em)) e.email = 'Enter a valid email, like name@company.com';
-  if (!pw) e.pw = 'Enter your password';
-  if (Object.keys(e).length) {
-    render();
-    (e.email ? $('#l-email') : $('#l-pw'))?.focus();
-    if (!e.email) $('#l-pw').value = pw;
-    return;
-  }
   if (!sb) {
     e.login = 'This build has no backend configured.';
     render();
     return;
   }
-  const btn = $('#login-btn');
+  const btn = $('#google-btn');
   btn?.classList.add('is-loading');
   btn?.setAttribute('aria-busy', 'true');
   try {
-    const { session } = await signInWithPassword(sb, em, pw);
-    /* startWorkspace binds the cache to this user and loads their doc; it
-       fails closed (returns 'login') when the server is unreachable and
-       no trusted same-uid cache exists — no entering on seed data. */
-    if ((await startWorkspace(session)) === 'login') {
-      S.ui.errors.login = lastSyncError() || errMessage(new TypeError('Failed to fetch'));
-      render();
-      $('#l-pw').value = pw;
-      return;
-    }
-    enterApp(`Signed in as ${em}`);
+    await signInWithGoogle(sb, window.location.origin);
   } catch (err) {
-    S.ui.errors.login = err.message;
-    render();
-    $('#l-pw').value = pw;
+    e.login = err.message;
   } finally {
+    /* Runs before the browser navigates away too: the button must not
+       stay in a loading state if the redirect is slow or was blocked. */
     btn?.classList.remove('is-loading');
     btn?.removeAttribute('aria-busy');
+    if (e.login) render();
   }
 };
-A.doSignup = async () => {
-  const e = (S.ui.errors = {});
-  const nm = $('#s-name').value.trim(),
-    em = $('#s-email').value.trim(),
-    pw = $('#s-pw').value;
-  S.ui.af.name = nm;
-  S.ui.af.email = em;
-  if (!nm) e.name = 'Enter your name';
-  if (!EMAIL_RE.test(em)) e.email = 'Enter a valid work email';
-  if (pw.length < 10 || !/[0-9\W]/.test(pw)) e.pw = 'Use at least 10 characters, including a number or symbol';
-  if (Object.keys(e).length) {
-    render();
-    $('#s-email').value = em;
-    return;
-  }
-  if (!sb) {
-    e.signup = 'This build has no backend configured.';
-    render();
-    return;
-  }
-  const btn = $('#signup-btn');
-  btn?.classList.add('is-loading');
-  btn?.setAttribute('aria-busy', 'true');
-  try {
-    const { session } = await signUp(sb, em, pw, { data: { full_name: nm } });
-    if (!session) throw new Error(errMessage({ code: 'email_not_confirmed' }));
-    setCurrentUser(session.user.id);
-    S.data = seed();
-    S.views = {};
-    S.prefs = { ...DEFAULT_PREFS };
-    /* The in-app identity matches the account from first render: the 'me'
-       member and prefs.name get the collected name + account email. */
-    applyUserIdentity(S, session.user);
-    S.ui.errors = {};
-    S.ui.pwNew = '';
-    S.ui.auth = 'onboarding';
-    S.ui.onb = 0;
-    S.ui.onbData.ws = '';
-    S.ui.onbData.url = '';
-    render();
-  } catch (err) {
-    if (/already exists/i.test(err.message)) e.email = err.message;
-    else e.signup = err.message;
-    render();
-  } finally {
-    btn?.classList.remove('is-loading');
-    btn?.removeAttribute('aria-busy');
-  }
-};
+export const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
 /* onboarding */
 A.onbSet = el => {
