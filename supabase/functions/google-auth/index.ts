@@ -3,16 +3,21 @@
 //   GET  /functions/v1/google-auth/authorize  → 302 to accounts.google.com
 //        (Accept: application/json → 200 { url } so a CORS fetch can
 //         collect the URL instead of being eaten by a cross-origin 302)
-//   GET  /functions/v1/google-auth/callback   → exchange code, store the
-//        refresh token (service role), 302 back to the app
+//   GET  /functions/v1/google-auth/callback   → verify the per-flow state,
+//        consume the pending nonce, exchange the code, store the refresh
+//        token (service role), 302 back to the app
 //   GET  /functions/v1/google-auth/status     → { connected, email }
 //   POST /functions/v1/google-auth/disconnect → delete the row
-// Every route (except OPTIONS) validates the caller's Supabase JWT —
-// the gateway adds no auth on /functions/v1/*.
+// Every route (except OPTIONS + callback) validates the caller's Supabase
+// JWT — the gateway adds no auth on /functions/v1/*.
+// OAuth state is per-flow: authorize mints a fresh nonce, stores it with a
+// 10-minute expiry (service role) and signs userid.nonce; the callback
+// requires the row to still hold THIS nonce and consumes it before the
+// code exchange — replay, expiry and superseded flows all fail closed.
 // Tokens NEVER leave the server: status/disconnect responses carry no
 // token material, only { connected, email }.
 // =====================================================================
-import { GOOGLE_SCOPE_PARAM, signState, verifyState } from '../_shared/google-pure.js';
+import { GOOGLE_SCOPE_PARAM, signState, verifyState, pendingMatches, pendingExpired } from '../_shared/google-pure.js';
 import {
   APP_ORIGIN,
   PUBLIC_URL,
@@ -26,6 +31,8 @@ import {
   getIntegration,
   upsertIntegration,
   deleteIntegration,
+  setPendingNonce,
+  consumePendingNonce,
 } from '../_shared/edge.ts';
 
 const CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') || '';
@@ -85,7 +92,12 @@ Deno.serve(async (req: Request) => {
         if (!CLIENT_ID || !CLIENT_SECRET) return json(req, { error: 'google_not_configured' }, 500);
         const user = await getAuthUser(req);
         if (!user) return unauthorized(req);
-        const state = await signState(user.id, SERVICE_ROLE_KEY);
+        /* Per-flow state: a fresh nonce per authorize, stored with a
+           10-minute expiry so the state cannot be reused or replayed. */
+        const nonce = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+        await setPendingNonce(user.id, nonce, expiresAt);
+        const state = await signState(user.id, nonce, SERVICE_ROLE_KEY);
         const url = consentUrl(user.id, state);
         const wantsJson = (req.headers.get('Accept') || '').includes('application/json') || new URL(req.url).searchParams.get('format') === 'json';
         return wantsJson ? json(req, { url }) : seeOther(req, url);
@@ -102,6 +114,17 @@ Deno.serve(async (req: Request) => {
         const v = await verifyState(state, SERVICE_ROLE_KEY);
         if (!v.ok) return json(req, { error: 'invalid_state', reason: v.reason }, 400);
         if (!code) return json(req, { error: 'missing_code' }, 400);
+        /* Single-use consumption BEFORE the code exchange: the stored flow
+           must still hold THIS nonce (never started / superseded / already
+           consumed all fail) and must not be expired. The consume UPDATE
+           matches on the nonce itself, so a concurrent replay loses the
+           race. A consumed-but-failed exchange burns the flow — the user
+           starts a fresh authorize. */
+        const row = await getIntegration(v.userId);
+        if (!pendingMatches(row, v.nonce)) return json(req, { error: 'invalid_state', reason: 'consumed_or_mismatch' }, 400);
+        if (pendingExpired(row.pending_expires)) return json(req, { error: 'invalid_state', reason: 'expired' }, 400);
+        const consumed = await consumePendingNonce(v.userId, v.nonce);
+        if (!consumed) return json(req, { error: 'invalid_state', reason: 'consumed' }, 400);
         const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

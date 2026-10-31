@@ -4,7 +4,8 @@
    (shared with the Deno runtime and node tests). State on S.ui:
      S.ui.google   { connected, email, loaded }   fetched at boot + after
                                                    connect / disconnect
-     S.ui.gState   'idle' | 'loading' | 'ok' | 'error' | 'off'  (gmail list)
+     S.ui.gState   'idle' | 'loading' | 'ok' | 'error' | 'off'  (gmail list;
+                   'error' is terminal until the manual Retry action)
      S.ui.gmsgs    mapped gmail messages
      S.ui.gsel     selected gmail message id
      S.ui.gevState 'idle' | 'loading' | 'ok' | 'error' | 'off'
@@ -17,6 +18,7 @@
 import { S } from './store.js';
 import { sb } from './supabase.js';
 import { render } from '../shell/render.js';
+import { shouldFetch, shouldFetchWindow } from '../../supabase/functions/_shared/google-pure.js';
 
 const FN_BASE = () => (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '') + '/functions/v1';
 
@@ -48,14 +50,19 @@ async function gFetch(path, { method = 'GET', params } = {}) {
 }
 
 /* Boot / post-connect / post-disconnect: who is connected? Renders so the
-   Inbox + Calendar + Settings surfaces settle into the right state. */
+   Inbox + Calendar + Settings surfaces settle into the right state. The
+   in-flight guard keeps render-triggered calls from stacking: one status
+   check at a time, and an errored check stays terminal until Retry. */
 export async function loadGoogleStatus() {
-  if (!sb) return;
+  if (!sb || S.ui.googleStatusLoading) return;
+  S.ui.googleStatusLoading = true;
   try {
     const body = await gFetch('google-auth/status');
     S.ui.google = { connected: !!body.connected, email: body.email || null, loaded: true };
   } catch {
     S.ui.google = { connected: false, email: null, loaded: false, error: true };
+  } finally {
+    S.ui.googleStatusLoading = false;
   }
   render();
 }
@@ -85,8 +92,13 @@ export async function disconnectGoogle() {
 
 /* ---------- Gmail (Inbox category 'gmail') ---------- */
 
+/* Fetch-on-render guard: an 'error' state is TERMINAL — the Inbox calls
+   this on every synchronous render, so an auto-retrying failure would
+   loop forever (fetch → fail → render → fetch) and hammer the edge
+   function + Google's token endpoint. Only the manual Retry action
+   resets the state to 'idle' and re-arms exactly one fetch. */
 export async function ensureGmail() {
-  if (S.ui.gState === 'loading' || S.ui.gState === 'ok') return;
+  if (!shouldFetch(S.ui.gState)) return;
   S.ui.gState = 'loading';
   render();
   try {
@@ -110,11 +122,13 @@ export async function ensureGmail() {
 /* ---------- Google Calendar (route 'calendar') ---------- */
 
 /* win = { from, to } — the visible grid window. Refetches whenever the
-   window changes (month navigation) and after a disconnect/retry. */
+   window changes (month navigation) and after a disconnect/retry. The
+   same-window guard is the pure shouldFetchWindow decision: a settled or
+   failed ('error') state only blocks refetching the SAME window — an
+   error stays terminal until the manual Retry action resets it. */
 export async function ensureGoogleCalendar(win) {
   const key = `${win.from}..${win.to}`;
-  if (S.ui.gevWin === key && (S.ui.gevState === 'ok' || S.ui.gevState === 'empty')) return;
-  if (S.ui.gevKey === key && S.ui.gevState === 'loading') return;
+  if (!shouldFetchWindow(S.ui.gevState, key, S.ui.gevKey)) return;
   S.ui.gevKey = key;
   S.ui.gevState = 'loading';
   S.ui.gevs = [];

@@ -12,6 +12,11 @@ import {
   safeEqual,
   signState,
   verifyState,
+  pendingMatches,
+  pendingExpired,
+  shouldFetch,
+  shouldFetchWindow,
+  googleReturnBanner,
   parseFromHeader,
   mapGmailMessage,
   eventDateKey,
@@ -33,44 +38,90 @@ test('GOOGLE_SCOPE_PARAM joins the scopes with spaces (Google OAuth wire format)
   for (const s of GOOGLE_SCOPES) assert.match(s, /\.readonly$/, `scope ${s} must be read-only`);
 });
 
-/* ---------- state HMAC sign/verify ---------- */
+/* ---------- state HMAC sign/verify (per-flow nonce, F2) ---------- */
 
 const KEY = 'service-role-key-for-tests';
+const UID = '11111111-2222-3333-4444-555555555555';
 
-test('signState returns "userid.signature" and verifyState accepts it', async () => {
-  const state = await signState('11111111-2222-3333-4444-555555555555', KEY);
-  assert.match(state, /^11111111-2222-3333-4444-555555555555\.[A-Za-z0-9_-]+$/, 'userid + dot + base64url signature');
+test('signState returns "userid.nonce.signature" and verifyState accepts it', async () => {
+  const state = await signState(UID, 'nonce-1', KEY);
+  assert.match(state, new RegExp(`^${UID}\\.nonce-1\\.[A-Za-z0-9_-]+$`), 'userid + nonce + dot + base64url signature');
   const v = await verifyState(state, KEY);
-  assert.deepEqual(v, { ok: true, userId: '11111111-2222-3333-4444-555555555555' });
+  assert.deepEqual(v, { ok: true, userId: UID, nonce: 'nonce-1' });
 });
 
-test('signing is deterministic (same user + key → same signature)', async () => {
-  const a = await signState('user-a', KEY);
-  const b = await signState('user-a', KEY);
-  assert.equal(a, b);
+test('the nonce makes the state per-flow: a fresh nonce mints a fresh signature', async () => {
+  const a = await signState('user-a', 'nonce-1', KEY);
+  const b = await signState('user-a', 'nonce-1', KEY);
+  assert.equal(a, b, 'same user + same nonce + same key is deterministic');
+  const c = await signState('user-a', 'nonce-2', KEY);
+  assert.notEqual(a, c, 'a fresh nonce per authorize must change the state (no replayable constant)');
+  assert.notEqual(
+    (await signState('user-a', 'nonce-1', KEY)).split('.')[2],
+    (await signState('user-b', 'nonce-1', KEY)).split('.')[2],
+    'different users never share a signature',
+  );
 });
 
 test('a tampered state is rejected (payload edited)', async () => {
-  const state = await signState('user-a', KEY);
+  const state = await signState('user-a', 'nonce-1', KEY);
   const evil = state.replace('user-a', 'user-b'); // attacker swaps the user id
   assert.equal((await verifyState(evil, KEY)).ok, false, 'swapped id must not verify');
+  const evilNonce = state.replace('nonce-1', 'nonce-9'); // attacker swaps the nonce
+  assert.equal((await verifyState(evilNonce, KEY)).ok, false, 'swapped nonce must not verify');
   const flipped = state.slice(0, -2) + (state.endsWith('aa') ? 'ab' : 'aa');
   assert.equal((await verifyState(flipped, KEY)).ok, false, 'flipped signature char must not verify');
 });
 
 test('a foreign key is rejected', async () => {
-  const state = await signState('user-a', KEY);
+  const state = await signState('user-a', 'nonce-1', KEY);
   const v = await verifyState(state, 'a-different-secret');
   assert.equal(v.ok, false);
   assert.notEqual(v.reason, undefined);
 });
 
 test('malformed states are rejected without throwing', async () => {
-  for (const bad of ['', '.', 'justauserid', '.signatureonly', 'x.']) {
+  for (const bad of ['', '.', 'justauserid', 'a.b', 'a.b.c.d', '.nonce.sig', 'x..sig', 'x.nonce.']) {
     const v = await verifyState(bad, KEY);
     assert.equal(v.ok, false, `state ${JSON.stringify(bad)} must not verify`);
   }
   assert.equal((await verifyState(null, KEY)).ok, false);
+});
+
+/* ---------- single-use consumption + expiry decisions (F2) ---------- */
+
+test('pendingMatches requires the row to still hold THIS flow nonce', () => {
+  assert.equal(pendingMatches({ pending_nonce: 'n1' }, 'n1'), true);
+  assert.equal(pendingMatches({ pending_nonce: 'n1' }, 'n2'), false, 'a different (superseded) nonce never matches');
+  assert.equal(pendingMatches({ pending_nonce: null }, 'n1'), false, 'a consumed (NULL) nonce never matches');
+  assert.equal(pendingMatches(null, 'n1'), false, 'no row at all → no match');
+  assert.equal(pendingMatches({ pending_nonce: 'n1' }, ''), false, 'an empty claimed nonce never matches');
+});
+
+test('pendingExpired fails closed and honours the injected instant', () => {
+  const now = Date.parse('2026-10-31T12:00:00Z');
+  assert.equal(pendingExpired('2026-10-31T11:59:59Z', now), true, 'past expiry is expired');
+  assert.equal(pendingExpired('2026-10-31T12:00:01Z', now), false, 'future expiry is still valid');
+  assert.equal(pendingExpired('2026-10-31T12:00:00Z', now), true, 'expiry at this instant is expired (<=)');
+  assert.equal(pendingExpired(null, now), true, 'missing expiry fails closed');
+  assert.equal(pendingExpired('garbage', now), true, 'unparseable expiry fails closed');
+});
+
+/* ---------- fetch-on-render guards (F1: error states are terminal) ---------- */
+
+test('shouldFetch: fresh states may fetch, terminal states may not', () => {
+  for (const fresh of [undefined, null, '', 'idle', 'off']) assert.equal(shouldFetch(fresh), true, `${String(fresh)} may fetch`);
+  for (const terminal of ['loading', 'ok', 'empty', 'error']) assert.equal(shouldFetch(terminal), false, `${terminal} is terminal until Retry`);
+});
+
+test('shouldFetchWindow: same-window terminal state blocks; a changed window always fetches', () => {
+  assert.equal(shouldFetchWindow('ok', 'a..b', 'a..b'), false, 'settled window is cached');
+  assert.equal(shouldFetchWindow('error', 'a..b', 'a..b'), false, 'error is terminal for the SAME window');
+  assert.equal(shouldFetchWindow('error', 'c..d', 'a..b'), true, 'navigating to a new window fetches');
+  assert.equal(shouldFetchWindow('loading', 'a..b', 'a..b'), false, 'no duplicate in-flight fetch');
+  assert.equal(shouldFetchWindow('loading', 'c..d', 'a..b'), true);
+  assert.equal(shouldFetchWindow('idle', 'a..b', 'a..b'), true);
+  assert.equal(shouldFetchWindow('off', 'a..b', 'a..b'), true, 'off re-arms (surfaces re-arm via connect)');
 });
 
 test('safeEqual is an honest constant-length comparison', () => {
@@ -79,6 +130,28 @@ test('safeEqual is an honest constant-length comparison', () => {
   assert.equal(safeEqual('abc', 'abcd'), false);
   assert.equal(safeEqual('', ''), true);
   assert.equal(safeEqual(null, 'x'), false);
+});
+
+/* ---------- consent-return banner decision (F3: the hash is untrusted) ---------- */
+
+const OK_RET = { google: 'ok', reason: '' };
+
+test('googleReturnBanner never claims success from the hash alone', () => {
+  assert.equal(googleReturnBanner(null, { connected: true, loaded: true }), null, 'no return → no banner');
+  assert.equal(googleReturnBanner({ google: 'denied' }, { connected: true, loaded: true }).kind, 'error', 'a genuine failure stays an error banner');
+  assert.equal(googleReturnBanner(OK_RET, { connected: true, loaded: true }).kind, 'success', 'success ONLY when the fetched status reports connected');
+  assert.equal(
+    googleReturnBanner(OK_RET, { connected: false, loaded: false }).kind,
+    'pending',
+    'crafted ok-hash before the status lands → neutral pending, never success',
+  );
+  assert.equal(googleReturnBanner(OK_RET, undefined).kind, 'pending', 'no status at all → pending');
+  assert.equal(googleReturnBanner(OK_RET, { connected: false, loaded: false, error: true }).kind, 'pending', 'status check unavailable → pending');
+  assert.equal(
+    googleReturnBanner(OK_RET, { connected: false, loaded: true }).kind,
+    'inactive',
+    'status check completed without a connection → honest inactive',
+  );
 });
 
 /* ---------- gmail mapping ---------- */

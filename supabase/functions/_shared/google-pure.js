@@ -19,12 +19,85 @@ export const GOOGLE_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 
 /* Google OAuth expects the scope list space-separated in one parameter. */
 export const GOOGLE_SCOPE_PARAM = GOOGLE_SCOPES.join(' ');
 
-/* ---------- base64url + HMAC-SHA256 state signing ---------- */
+/* ---------- fetch-on-render guards (error states are terminal) ---------- */
 
-/* CSRF state for the OAuth round-trip: "<user id>.<base64url(HMAC-SHA256(user id, secret))>".
-   The callback re-computes the signature from the user id and compares in
-   constant time; a forged or replayed state fails the check. The secret is
-   the service-role key, which never leaves the server. */
+/* A fetch may start only from a non-terminal state. 'loading' is in
+   flight, 'ok'/'empty' are settled results and 'error' is TERMINAL until
+   the user's explicit Retry action resets the state to 'idle'. render()
+   is synchronous and pages call the ensure*() helpers on every render, so
+   an auto-retrying error state would loop forever (fetch → fail → render
+   → fetch) and hammer the edge function + Google's token endpoint.
+   'idle', 'off' (disconnected surface; surfaces re-arm via connect) and
+   unset states may fetch. */
+export function shouldFetch(state) {
+  return state !== 'loading' && state !== 'ok' && state !== 'empty' && state !== 'error';
+}
+
+/* Calendar fetches are window-scoped: a settled or failed state only
+   blocks refetching the SAME window (winKey === fetchedKey). A changed
+   window is a navigation, not a retry, and always fetches. */
+export function shouldFetchWindow(state, winKey, fetchedKey) {
+  return shouldFetch(state) || winKey !== fetchedKey;
+}
+
+/* ---------- OAuth state with per-flow nonce ---------- */
+
+/* CSRF state for the OAuth round-trip: "<user id>.<nonce>.<base64url(HMAC-SHA256(user id + '.' + nonce, secret))>".
+   The nonce makes the state per-flow: authorize mints a fresh one and
+   stores it (with a 10-minute expiry) next to the user's integration row;
+   the callback requires the row to still hold THIS nonce and consumes it
+   before exchanging the code, so a leaked state cannot be replayed to
+   bind a different Google account into the victim's row. The callback
+   re-computes the signature in constant time; a forged, expired,
+   consumed or foreign-key state fails the check. The secret is the
+   service-role key, which never leaves the server. */
+
+export async function signState(userId, nonce, key) {
+  if (!userId || !nonce || !key) throw new TypeError('signState needs a user id, a fresh nonce and a signing key');
+  return `${userId}.${nonce}.${await hmacSign(`${userId}.${nonce}`, key)}`;
+}
+
+export async function verifyState(state, key) {
+  if (!state || !key) return { ok: false, reason: 'missing' };
+  const parts = String(state).split('.');
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return { ok: false, reason: 'format' };
+  const [userId, nonce, signature] = parts;
+  const expected = await hmacSign(`${userId}.${nonce}`, key);
+  if (!safeEqual(signature, expected)) return { ok: false, reason: 'signature' };
+  return { ok: true, userId, nonce };
+}
+
+/* Pending-nonce row checks (used by the callback before consuming):
+   the stored pending row must still hold THIS flow's nonce — a missing
+   row or a NULL pending_nonce means the flow was never started, was
+   superseded by a newer authorize, or was already consumed. */
+export function pendingMatches(row, nonce) {
+  return !!(row && row.pending_nonce && nonce && row.pending_nonce === nonce);
+}
+
+/* The stored pending flow must not be expired. A missing or unparseable
+   expiry fails closed. `nowMs` is injectable so tests are deterministic. */
+export function pendingExpired(pendingExpires, nowMs = Date.now()) {
+  if (!pendingExpires) return true;
+  const t = new Date(pendingExpires).getTime();
+  return !Number.isFinite(t) || t <= nowMs;
+}
+
+/* ---------- consent-return banner decision (frontend) ---------- */
+
+/* The '#settings?google=ok' hash is attacker-craftable, so it can never by
+   itself claim success. The decision needs the FETCHED integration status:
+   'success' only when the status reports connected, 'pending' while the
+   status check is still in flight or unavailable, 'inactive' when it
+   completed without a connection, 'error' for a genuine failed round-trip
+   (google=denied|error&reason=…), null when there is no return to show. */
+export function googleReturnBanner(ret, status) {
+  if (!ret) return null;
+  if (ret.google !== 'ok') return { kind: 'error' };
+  if (status && status.connected) return { kind: 'success' };
+  if (status && status.loaded && !status.error) return { kind: 'inactive' };
+  return { kind: 'pending' };
+}
 
 export function b64urlFromBytes(buf) {
   let s = '';
@@ -47,22 +120,6 @@ export function safeEqual(a, b) {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
-}
-
-export async function signState(userId, key) {
-  if (!userId || !key) throw new TypeError('signState needs a user id and a signing key');
-  return `${userId}.${await hmacSign(userId, key)}`;
-}
-
-export async function verifyState(state, key) {
-  if (!state || !key) return { ok: false, reason: 'missing' };
-  const dot = state.indexOf('.');
-  if (dot <= 0 || dot === state.length - 1) return { ok: false, reason: 'format' };
-  const userId = state.slice(0, dot);
-  const signature = state.slice(dot + 1);
-  const expected = await hmacSign(userId, key);
-  if (!safeEqual(signature, expected)) return { ok: false, reason: 'signature' };
-  return { ok: true, userId };
 }
 
 /* ---------- Gmail metadata → inbox item ---------- */

@@ -8,7 +8,8 @@ import { av, pIcon } from '../ui/helpers.js';
 import { permsTable, teamsGrid } from './members.js';
 import { page404 } from './errors.js';
 import { SHORTCUTS } from '../overlays/modals.js';
-import { googleStatus } from '../core/google.js';
+import { googleReturnBanner } from '../../supabase/functions/_shared/google-pure.js';
+import { googleStatus, loadGoogleStatus } from '../core/google.js';
 
 export const SET_NAV = [
   [
@@ -439,11 +440,22 @@ function googleReturnCopy(ret) {
 export function googleIntegrationsBody(H) {
   const g = googleStatus();
   const ret = S.ui.googleReturn;
-  const banner = ret
-    ? ret.google === 'ok'
+  /* The google= hash is attacker-craftable, so the banner never trusts it
+     alone (F3): the kind comes from the FETCHED status. If the status check
+     has not landed yet, fire it once from this render — the in-flight and
+     terminal-error guards keep this from ever becoming a render loop. */
+  if (ret && !g.loaded && !g.error && !S.ui.googleStatusLoading) loadGoogleStatus();
+  const kind = googleReturnBanner(ret, g)?.kind;
+  const banner =
+    kind === 'success'
       ? `<div class="alert ok" style="margin-bottom:14px">${ic('circle-check', 15)}<span><b>Google connected.</b> Your Gmail inbox shows up in Inbox → Gmail, and your Google Calendar on the Calendar page.</span></div>`
-      : `<div class="alert danger" style="margin-bottom:14px">${ic('triangle-alert', 15)}<div><b>Google wasn't connected.</b><div class="muted" style="margin-top:2px">${esc(googleReturnCopy(ret))}</div></div></div>`
-    : '';
+      : kind === 'pending'
+        ? `<div class="alert info" style="margin-bottom:14px">${ic('mail', 15)}<span>Returned from Google — checking connection…</span></div>`
+        : kind === 'inactive'
+          ? `<div class="alert info" style="margin-bottom:14px">${ic('mail', 15)}<span><b>Returned from Google</b> — no connection is active. Try Connect below.</span></div>`
+          : kind === 'error'
+            ? `<div class="alert danger" style="margin-bottom:14px">${ic('triangle-alert', 15)}<div><b>Google wasn't connected.</b><div class="muted" style="margin-top:2px">${esc(googleReturnCopy(ret))}</div></div></div>`
+            : '';
   const row = g.connected
     ? srow(
         `<span class="row" style="gap:10px">${ic('mail', 15)}<b style="font-weight:500">Google</b><span class="badge green">${ic('check', 11)}Connected</span></span>`,

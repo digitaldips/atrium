@@ -42,8 +42,10 @@ A.gRetry = () => {
   ensureGmail();
 };
 
-/* calendar: retry after a failed events fetch (window is recomputed) */
+/* calendar: retry after a failed events fetch (resets the terminal error
+   state and recomputes the window) */
 A.gCalRetry = () => {
+  S.ui.gevState = 'idle';
   S.ui.gevKey = null;
   ensureGoogleCalendar(currentCalWindow());
 };

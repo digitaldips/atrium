@@ -61,7 +61,7 @@ function serviceHeaders(extra: Record<string, string> = {}) {
 
 export async function getIntegration(userId: string) {
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/user_integrations?user_id=eq.${encodeURIComponent(userId)}&select=user_id,google_refresh_token,google_email,scopes,connected_at`,
+    `${SUPABASE_URL}/rest/v1/user_integrations?user_id=eq.${encodeURIComponent(userId)}&select=user_id,google_refresh_token,google_email,scopes,connected_at,pending_nonce,pending_expires`,
     {
       headers: serviceHeaders(),
     },
@@ -86,6 +86,35 @@ export async function deleteIntegration(userId: string) {
     headers: serviceHeaders(),
   });
   if (!res.ok) throw new Error(`user_integrations delete failed: ${res.status}`);
+}
+
+/* Store the pending OAuth flow for a user: a fresh nonce + its expiry.
+   Upsert (merge-duplicates) touches ONLY the pending columns — never the
+   token columns — so starting a new consent flow cannot disturb an
+   existing connection. One pending flow per user (PK user_id): a newer
+   authorize supersedes an older one. */
+export async function setPendingNonce(userId: string, nonce: string, expiresAt: string) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/user_integrations?on_conflict=user_id`, {
+    method: 'POST',
+    headers: serviceHeaders({ Prefer: 'resolution=merge-duplicates' }),
+    body: JSON.stringify({ user_id: userId, provider: 'google', pending_nonce: nonce, pending_expires: expiresAt }),
+  });
+  if (!res.ok) throw new Error(`user_integrations pending-nonce upsert failed: ${res.status}`);
+}
+
+/* Consume the pending nonce (single-use): the UPDATE matches on the nonce
+   itself, so only the first callback with a still-pending flow wins the
+   race — a concurrent replay finds no matching row and is rejected.
+   Returns true when this call consumed the flow. */
+export async function consumePendingNonce(userId: string, nonce: string): Promise<boolean> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/user_integrations?user_id=eq.${encodeURIComponent(userId)}&pending_nonce=eq.${encodeURIComponent(nonce)}`, {
+    method: 'PATCH',
+    headers: serviceHeaders({ Prefer: 'return=representation' }),
+    body: JSON.stringify({ pending_nonce: null, pending_expires: null }),
+  });
+  if (!res.ok) throw new Error(`user_integrations pending-nonce consume failed: ${res.status}`);
+  const rows = await res.json();
+  return Array.isArray(rows) && rows.length > 0;
 }
 
 /* Exchange a refresh token for a fresh access token (per request; nothing
