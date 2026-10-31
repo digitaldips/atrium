@@ -7,7 +7,7 @@ import { FT, av, filePrev, lbl, prPill, stPill } from '../ui/helpers.js';
 import { focusKey, render } from '../shell/render.js';
 import { teamModal } from '../features/teams.js';
 import { clientDetailHtml, clientFormHtml, dealFormHtml } from '../pages/crm.js';
-import { resolveEnabledCalendars } from '../../supabase/functions/_shared/google-pure.js';
+import { resolveEnabledCalendars, busyBarLayout } from '../../supabase/functions/_shared/google-pure.js';
 
 export function openModal(m) {
   S.ui.modalOpeners = S.ui.modalOpeners || [];
@@ -331,15 +331,19 @@ function busyStrip(f) {
   if (st.state === 'empty') return `<div class="faint" style="font-size:12px">${ic('circle-check', 12)} No busy blocks on this day.</div>`;
   const [y, m, d] = f.date.split('-').map(Number);
   const dayStart = new Date(y, m - 1, d).getTime();
-  const dayMs = 86400e3;
+  /* F5: the strip divides by the TRUE local day span — 23 h on a
+     spring-forward day, 25 h on fall-back — the same window busyOnDay
+     clipped the blocks to. A fixed 86400e3 drifts on DST-shifted days.
+     The text list below stays the fallback source of truth. */
+  const dayEnd = new Date(y, m - 1, d + 1).getTime();
   const fmt = ms => {
     const t = new Date(ms);
     return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
   };
-  const bars = st.blocks
+  const bars = busyBarLayout(st.blocks, dayStart, dayEnd)
     .map(
       b =>
-        `<span aria-hidden="true" style="position:absolute;left:${Math.min(99.4, Math.max(0, ((b.s - dayStart) / dayMs) * 100)).toFixed(2)}%;width:${Math.max(0.6, Math.min(100, ((b.e - b.s) / dayMs) * 100)).toFixed(2)}%;top:0;bottom:0;background:var(--red);opacity:.35;border-radius:4px"></span>`,
+        `<span aria-hidden="true" style="position:absolute;left:${b.left.toFixed(2)}%;width:${Math.max(0.6, b.width).toFixed(2)}%;top:0;bottom:0;background:var(--red);opacity:.35;border-radius:4px"></span>`,
     )
     .join('');
   const list = st.blocks.map(b => `${fmt(b.s)} – ${fmt(b.e)}`).join(' · ');

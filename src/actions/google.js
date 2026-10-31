@@ -5,7 +5,7 @@ import { S } from '../core/store.js';
 import { render } from '../shell/render.js';
 import { toast, mutate } from '../ui/toast.js';
 import { openModal, closeModal } from '../overlays/modals.js';
-import { eventDateKey } from '../../supabase/functions/_shared/google-pure.js';
+import { eventDateKey, bulkSelectionWarning, draftSendPlan } from '../../supabase/functions/_shared/google-pure.js';
 import {
   connectGoogle,
   googleStatus,
@@ -40,6 +40,7 @@ import {
   ensureFreebusy,
   ensureGmailDrafts,
   fetchGmailDraft,
+  resetGmailDrafts,
   saveGmailDraft,
   sendGmailDraft,
   toggleCalendarEnabled,
@@ -221,12 +222,21 @@ A.gSend = async () => {
   f.error = null;
   render();
   try {
-    /* Draft-aware send: a compose opened from the drafts list sends the
-       DRAFT itself (drafts/send) — the draft disappears from Gmail's
-       drafts on send. A fresh compose/reply uses messages/send as before. */
-    const draftId = S.ui.compose?.draftId || '';
-    if (draftId) await sendGmailDraft(draftId);
-    else await sendGmail({ to: f.to, cc: f.cc, subject: f.subject, body: f.body, threadId: f.threadId, inReplyTo: f.inReplyTo, references: f.references });
+    /* Draft-aware send (F2): a compose opened from the drafts list sends
+       the DRAFT itself — but the stored draft went stale the moment the
+       form was edited, so the plan is update-then-send: PATCH the draft
+       with the CURRENT edited form first (the same save path), THEN send
+       the draft (Gmail semantics: sending a draft removes it). A failed
+       update surfaces in this catch — the stale draft never goes out
+       under a 'Message sent' toast. A fresh compose/reply keeps the
+       direct messages/send path. */
+    const plan = draftSendPlan(S.ui.compose?.draftId || '');
+    if (plan.updateThenSend) {
+      await saveGmailDraft({ to: f.to, cc: f.cc, subject: f.subject, body: f.body, threadId: f.threadId });
+      await sendGmailDraft(S.ui.compose?.draftId || plan.draftId);
+    } else {
+      await sendGmail({ to: f.to, cc: f.cc, subject: f.subject, body: f.body, threadId: f.threadId, inReplyTo: f.inReplyTo, references: f.references });
+    }
     closeModal();
     toast('Message sent');
     refetchGmailList();
@@ -363,6 +373,15 @@ A.gLabelChip = el => {
 A.gDraftsChip = () => {
   S.ui.gview = 'drafts';
   S.ui.gsel = null;
+  /* F4: the drafts view has no bulk rows — a selection carried over from
+     the mail list would sit invisible above the drafts, so it clears with
+     an honest toast. Also the manual Retry for a failed drafts fetch: the
+     reset re-arms exactly one fetch (F1 settled-state guard). */
+  if (S.ui.gselSet && S.ui.gselSet.size) {
+    S.ui.gselSet = new Set();
+    toast('Selection cleared — the drafts view has no bulk actions.');
+  }
+  resetGmailDrafts();
   render();
   ensureGmailDrafts();
 };
@@ -422,6 +441,13 @@ A.gBulk = el => {
   const op = el.dataset.op;
   const ids = [...(S.ui.gselSet || new Set())];
   if (!ids.length) return;
+  /* F4: the server clamps at 50 — over the clamp the action is refused
+     honestly (the bar is disabled too); never a silent truncation. */
+  const over = bulkSelectionWarning(ids.length);
+  if (over) {
+    toast(over, { kind: 'err' });
+    return;
+  }
   const finish = n => {
     S.ui.gselSet = new Set();
     refetchGmailList();

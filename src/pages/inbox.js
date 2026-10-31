@@ -3,7 +3,7 @@ import { MOD, ago, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { D, S, commentsOf, mem, pColor, proj, task } from '../core/store.js';
 import { googleStatus, ensureGmail, ensureGmailLabels, ensureGmailDrafts } from '../core/google.js';
-import { mergeInbox, safeLink } from '../../supabase/functions/_shared/google-pure.js';
+import { mergeInbox, safeLink, bulkSelectionWarning } from '../../supabase/functions/_shared/google-pure.js';
 import { av, empty, fmtComment, fsize } from '../ui/helpers.js';
 import { sanitizeMailHtml } from '../core/sanitize.js';
 import { cellAssignee, cellDue, cellPrio, cellStatus } from '../components/task-list.js';
@@ -102,12 +102,16 @@ function gmailChips() {
 function gmailBulkBar() {
   const n = S.ui.gselSet ? S.ui.gselSet.size : 0;
   if (!n) return '';
-  return `<div class="bulkbar" role="toolbar" aria-label="Bulk actions"><b style="font-weight:600">${n} selected</b><span class="sep"></span>
-    <button class="btn btn-sm" data-a="gBulk" data-op="read">${ic('mail-open', 14)}Mark read</button>
-    <button class="btn btn-sm" data-a="gBulk" data-op="unread">${ic('mail', 14)}Mark unread</button>
-    <button class="btn btn-sm" data-a="gBulk" data-op="archive">${ic('archive', 14)}Archive</button>
-    <button class="btn btn-sm" data-a="gBulk" data-op="trash">${ic('trash-2', 14)}Trash</button>
-    <button class="btn btn-sm" data-a="gBulk" data-op="delete" style="color:var(--red)">${ic('trash-2', 14)}Delete forever</button>
+  /* F4: over the 50-id server clamp the actions disable with the honest
+     warning — the selection is never silently truncated. */
+  const over = bulkSelectionWarning(n);
+  const dis = over ? 'disabled aria-disabled="true"' : '';
+  return `<div class="bulkbar" role="toolbar" aria-label="Bulk actions"><b style="font-weight:600">${n} selected</b>${over ? `<span class="faint" style="font-size:11.5px">${esc(over)}</span>` : ''}<span class="sep"></span>
+    <button class="btn btn-sm" data-a="gBulk" data-op="read" ${dis}>${ic('mail-open', 14)}Mark read</button>
+    <button class="btn btn-sm" data-a="gBulk" data-op="unread" ${dis}>${ic('mail', 14)}Mark unread</button>
+    <button class="btn btn-sm" data-a="gBulk" data-op="archive" ${dis}>${ic('archive', 14)}Archive</button>
+    <button class="btn btn-sm" data-a="gBulk" data-op="trash" ${dis}>${ic('trash-2', 14)}Trash</button>
+    <button class="btn btn-sm" data-a="gBulk" data-op="delete" ${dis} style="color:var(--red)">${ic('trash-2', 14)}Delete forever</button>
     <span class="sep"></span><button class="btn btn-sm" data-a="gBulkClear" aria-label="Clear selection">${ic('x', 14)}</button></div>`;
 }
 

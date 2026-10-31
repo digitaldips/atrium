@@ -140,8 +140,17 @@ async function fetchCalendarEntries(
    against the calendarList (a calendar the account cannot see is never
    queried), events are fetched per calendar in parallel and merged into
    ONE time-sorted list with per-calendar color attribution
-   (calendarId / calendarSummary / colorId / calendarColor). */
-async function fetchCalendarWindow(accessToken: string, from: string, to: string, idsParam: string): Promise<Response> {
+   (calendarId / calendarSummary / colorId / calendarColor).
+   F6: one failing calendar no longer sinks the window — its failure is
+   returned as a calendarErrors marker ({ calendarId, status }) and the
+   successful calendars still render; the frontend names the failure
+   (toast / error banner). */
+async function fetchCalendarWindow(
+  accessToken: string,
+  from: string,
+  to: string,
+  idsParam: string,
+): Promise<{ events: unknown[]; calendarErrors: Array<{ calendarId: string; status: number }> }> {
   const pad = expandDayRange(from, to);
   const params = new URLSearchParams({
     timeMin: `${pad.from}T00:00:00Z`,
@@ -162,7 +171,7 @@ async function fetchCalendarWindow(accessToken: string, from: string, to: string
   const perCalendar = await Promise.all(
     enabled.map(async id => {
       const res = await authedGet(`${CAL_BASE}/${encodeURIComponent(id)}/events?${params}`, accessToken);
-      if (!res.ok) return { res, events: [] as unknown[] };
+      if (!res.ok) return { id, res, events: [] as unknown[] };
       const body = (await res.json().catch(() => ({ items: [] }))) as { items?: unknown[] };
       const entry = byId.get(id);
       const events = ((body.items as unknown[]) || []).map((e: Record<string, unknown>) => ({
@@ -181,12 +190,15 @@ async function fetchCalendarWindow(accessToken: string, from: string, to: string
         colorId: entry ? entry.colorId : '',
         calendarColor: entry ? entry.backgroundColor : '',
       }));
-      return { res: null, events };
+      return { id, res: null as Response | null, events };
     }),
   );
-  const failed = perCalendar.find(x => x.res);
-  if (failed && failed.res) return failed.res;
-  return new Response(JSON.stringify(mergeCalendarEvents(perCalendar.map(x => x.events))), { headers: { 'Content-Type': 'application/json' } });
+  const merged = mergeCalendarEvents(perCalendar.map(x => x.events)) as unknown[];
+  const failures: Array<{ calendarId: string; status: number }> = [];
+  for (const x of perCalendar) {
+    if (x.res) failures.push({ calendarId: x.id, status: x.res.status });
+  }
+  return { events: merged, calendarErrors: failures };
 }
 
 /* Common shape: resolve the caller → stored refresh token → access token.
@@ -619,9 +631,13 @@ Deno.serve(async (req: Request) => {
         }
         const auth = await withAccessToken(req);
         if (auth instanceof Response) return auth;
-        const res = await fetchCalendarWindow(auth.accessToken, from, to, p.get('ids') || '');
-        if (!res.ok) return googleError(req, res);
-        return json(req, { connected: true, events: await res.json() });
+        /* F6: the window resolves per calendar — calendarErrors carries
+           the failures (partial results still render). */
+        const win = await fetchCalendarWindow(auth.accessToken, from, to, p.get('ids') || '');
+        return json(
+          req,
+          win.calendarErrors.length ? { connected: true, events: win.events, calendarErrors: win.calendarErrors } : { connected: true, events: win.events },
+        );
       }
 
       /* ---------- calendarList (picker source) ---------- */

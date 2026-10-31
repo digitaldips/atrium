@@ -26,7 +26,17 @@
 import { S } from './store.js';
 import { sb } from './supabase.js';
 import { render } from '../shell/render.js';
-import { busyOnDay, errorFromEndpoint, resolveEnabledCalendars, shouldFetch, shouldFetchWindow } from '../../supabase/functions/_shared/google-pure.js';
+import { toast } from '../ui/toast.js';
+import {
+  busyOnDay,
+  calendarWindowOutcome,
+  errorFromEndpoint,
+  refilterSelection,
+  resolveEnabledCalendars,
+  shouldFetch,
+  shouldFetchDrafts,
+  shouldFetchWindow,
+} from '../../supabase/functions/_shared/google-pure.js';
 
 const FN_BASE = () => (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '') + '/functions/v1';
 
@@ -137,12 +147,29 @@ export async function ensureGmail() {
     } else {
       S.ui.gState = 'ok';
       S.ui.gmsgs = Array.isArray(body.messages) ? body.messages : [];
+      /* F4: the list changed (chip/filter switch, retry) — the bulk
+         selection keeps only the ids still IN VIEW; the rest drop with an
+         honest toast instead of silently acting on invisible messages. */
+      applySelectionRefilter(S.ui.gmsgs);
     }
   } catch (e) {
     S.ui.gState = 'error';
     S.ui.gError = String(e?.message || 'Could not load your Gmail.');
   }
   render();
+}
+
+/* F4: keep the bulk selection honest across list changes — ids that left
+   the view drop from the selection with a toast (they must never be acted
+   on invisibly). A zero-drop refilter is a no-op. */
+function applySelectionRefilter(visibleMsgs) {
+  const ref = refilterSelection(
+    S.ui.gselSet,
+    (Array.isArray(visibleMsgs) ? visibleMsgs : []).map(m => m && m.id),
+  );
+  if (!ref.dropped) return;
+  S.ui.gselSet = ref.kept;
+  toast(`${ref.dropped} selected message${ref.dropped === 1 ? '' : 's'} no longer in this view and dropped from the selection.`);
 }
 
 /* ---------- Gmail labels (chips, badges, management) ---------- */
@@ -193,9 +220,16 @@ export async function deleteGLabel(id) {
 
 /* ---------- Gmail drafts (compose save/update, drafts filter) ---------- */
 
+/* F1: the SAME settled-state guard ensureGmailLabels has — the Drafts
+   page calls this on every synchronous render, so a settled 'ok' | 'empty'
+   | 'error' cache (or an in-flight one) must NEVER refetch on render or
+   the view loops fetch → render → fetch forever. The pure contract is
+   shouldFetchDrafts; the manual Retry (the drafts error view routes to the
+   drafts chip) and every draft mutation reset the state to 'idle', which
+   re-arms exactly one fetch. */
 export async function ensureGmailDrafts() {
   const st = (S.ui.gdrafts = S.ui.gdrafts || { state: 'idle', items: [] });
-  if (st.state === 'loading') return;
+  if (!shouldFetchDrafts(st.state)) return;
   st.state = 'loading';
   render();
   try {
@@ -216,6 +250,14 @@ export async function ensureGmailDrafts() {
   render();
 }
 
+/* Re-arm the drafts cache: the settled-state guard blocks refetching a
+   settled/failed view, so mutations and the manual Retry reset the state
+   to 'idle' — the next render (or the caller's ensureGmailDrafts) fetches
+   exactly once. */
+export function resetGmailDrafts() {
+  S.ui.gdrafts = { state: 'idle', items: [] };
+}
+
 /* Create on first save, update after — the draft id lives in
    S.ui.compose.draftId (session-scoped compose bookkeeping). */
 export async function saveGmailDraft(form) {
@@ -227,6 +269,7 @@ export async function saveGmailDraft(form) {
   if (!body.connected) throw new Error('Google is no longer connected.');
   S.ui.compose = S.ui.compose || {};
   S.ui.compose.draftId = body.draftId || draftId || '';
+  resetGmailDrafts(); // F1: the drafts view refetches once on its next render
   return S.ui.compose.draftId;
 }
 
@@ -240,6 +283,7 @@ export async function sendGmailDraft(draftId) {
   const body = await gFetch('google-data/gmail/draft/send', { method: 'POST', params: { id: draftId } });
   if (!body.connected) throw new Error('Google is no longer connected.');
   if (S.ui.compose) S.ui.compose.draftId = null;
+  resetGmailDrafts(); // F1: the sent draft is gone — the drafts view refetches once
   return body;
 }
 
@@ -247,6 +291,7 @@ export async function deleteGmailDraft(draftId) {
   const body = await gFetch('google-data/gmail/draft/delete', { method: 'DELETE', params: { id: draftId } });
   if (!body.connected) throw new Error('Google is no longer connected.');
   if (S.ui.compose && S.ui.compose.draftId === draftId) S.ui.compose.draftId = null;
+  resetGmailDrafts(); // F1: the drafts view refetches once on its next render
   return body.deleted !== false;
 }
 
@@ -308,9 +353,22 @@ export async function ensureGoogleCalendar(win) {
       S.ui.gevs = [];
       S.ui.gevWin = null;
     } else {
-      S.ui.gevState = (body.events || []).length ? 'ok' : 'empty';
-      S.ui.gevs = body.events || [];
+      /* F6: per-calendar failures no longer sink the window — partial
+         results render and the failing calendar is named (toast); a
+         window whose every calendar failed is an honest error. */
+      const events = body.events || [];
+      const errors = Array.isArray(body.calendarErrors) ? body.calendarErrors : [];
+      const out = calendarWindowOutcome(events, errors, (S.ui.gcalList && S.ui.gcalList.items) || []);
+      S.ui.gevs = events;
       S.ui.gevWin = key;
+      S.ui.gevErrors = errors.length ? errors : null;
+      if (out.state === 'error') {
+        S.ui.gevState = 'error';
+        S.ui.gevError = `Couldn't load ${out.names.join(', ')}.`;
+      } else {
+        S.ui.gevState = events.length ? 'ok' : 'empty';
+        if (out.state === 'partial') toast(`Couldn't load ${out.names.join(', ')} — the other calendars are shown.`, { kind: 'err' });
+      }
     }
   } catch (e) {
     S.ui.gevState = 'error';
@@ -439,6 +497,7 @@ export async function runGmailSearch(q) {
     } else {
       const msgs = Array.isArray(body.messages) ? body.messages : [];
       S.ui.gSearch = { state: msgs.length ? 'ok' : 'empty', msgs, nextPageToken: body.nextPageToken || '', error: null };
+      applySelectionRefilter(msgs); // F4: a new result set drops invisible selections
     }
   } catch (e) {
     S.ui.gSearch = { state: 'error', msgs: [], nextPageToken: '', error: String(e?.message || 'Search failed.') };

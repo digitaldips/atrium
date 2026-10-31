@@ -50,6 +50,88 @@ export function shouldFetchWindow(state, winKey, fetchedKey) {
   return shouldFetch(state) || winKey !== fetchedKey;
 }
 
+/* ---------- review fixes F1–F6 (gdepth fix loop) ---------- */
+
+/* F1 — Drafts cache guard: the exact contract ensureGmailDrafts enforces.
+   The Drafts page calls it on every synchronous render, so a settled
+   cache ('ok' | 'empty' | 'error') or an in-flight one ('loading') must
+   NEVER refetch on render — an unguarded fetch loops forever (fetch →
+   render → fetch) and hammers the edge function + Gmail quota. Only an
+   explicit reset (chip click / Retry / a draft mutation) re-arms exactly
+   one fetch. Delegates to shouldFetch so both guards stay in lockstep. */
+export function shouldFetchDrafts(state) {
+  return shouldFetch(state);
+}
+
+/* F2 — Draft-aware send plan. A compose opened from the drafts list sends
+   the DRAFT itself (Gmail semantics: sending a draft removes it), but the
+   stored draft went stale the moment the form was edited — so the send
+   MUST first update the draft with the current edited form (PATCH
+   gmail/draft, the same save path) and only then send it (POST
+   gmail/draft/send). Without a draftId the direct messages/send path is
+   unchanged. */
+export function draftSendPlan(draftId) {
+  const id = typeof draftId === 'string' ? draftId.trim() : '';
+  return id ? { updateThenSend: true, draftId: id } : { directSend: true };
+}
+
+/* F4 — bulk selection semantics (client honesty around the server clamp).
+   The endpoints clamp ids at 50 (validIdList); a selection over the clamp
+   must never LOOK actionable — the bar disables and this message explains
+   why, instead of silently truncating. */
+export const BULK_MAX = 50;
+
+export function bulkSelectionWarning(count, max = BULK_MAX) {
+  const n = Number(count);
+  if (!Number.isFinite(n) || n <= max) return '';
+  return `You selected ${n} messages — bulk actions apply to at most ${max}. Deselect some first.`;
+}
+
+/* F4 — selection refilter: after a list refetch (chip/filter switch,
+   search) the selection keeps only ids still IN VIEW; the rest are
+   dropped, and the count is reported so the UI can toast honestly. */
+export function refilterSelection(sel, visibleIds) {
+  const s = sel instanceof Set ? sel : new Set(Array.isArray(sel) ? sel : []);
+  const keep = new Set((Array.isArray(visibleIds) ? visibleIds : []).filter(v => typeof v === 'string' && v));
+  const kept = new Set([...s].filter(id => keep.has(id)));
+  return { kept, dropped: s.size - kept.size };
+}
+
+/* F5 — busy-strip layout: bar positions against the TRUE local day span.
+   ensureFreebusy clips blocks to the local [00:00, next 00:00) window —
+   23 h on a spring-forward day, 25 h on a fall-back day — so the strip
+   must divide by that SAME span, never a fixed 86400e3 (a late-evening
+   block would otherwise overflow the strip or leave it short on
+   DST-shifted days). Blocks are merged/clipped to the window by
+   busyOnDay, then positioned as { left, width } percentages. */
+export function busyBarLayout(blocks, startMs, endMs) {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return [];
+  const span = endMs - startMs;
+  return busyOnDay(blocks, startMs, endMs).map(iv => {
+    const left = Math.min(100, Math.max(0, ((iv.s - startMs) / span) * 100));
+    const width = Math.max(0, Math.min(100 - left, ((iv.e - iv.s) / span) * 100));
+    return { left, width };
+  });
+}
+
+/* F6 — multi-calendar window outcome. One failing calendar no longer
+   sinks the fetch: partial results render from the successful calendars
+   and the failures are NAMED (calendarList summary, raw id fallback); a
+   window whose EVERY calendar failed is an honest error. */
+export function calendarWindowOutcome(events, errors, calendars) {
+  const evs = Array.isArray(events) ? events : [];
+  const cals = Array.isArray(calendars) ? calendars : [];
+  const nameOf = id => {
+    const c = cals.find(x => x && x.id === id);
+    return c && typeof c.summary === 'string' && c.summary ? c.summary : id;
+  };
+  const errs = (Array.isArray(errors) ? errors : []).filter(e => e && typeof e.calendarId === 'string' && e.calendarId);
+  if (!evs.length && !errs.length) return { state: 'empty', names: [] };
+  if (!evs.length) return { state: 'error', names: errs.map(e => nameOf(e.calendarId)) };
+  if (errs.length) return { state: 'partial', names: errs.map(e => nameOf(e.calendarId)) };
+  return { state: 'ok', names: [] };
+}
+
 /* ---------- OAuth state with per-flow nonce ---------- */
 
 /* CSRF state for the OAuth round-trip: "<user id>.<nonce>.<base64url(HMAC-SHA256(user id + '.' + nonce, secret))>".
@@ -712,11 +794,20 @@ export function safeCalId(s) {
 /* freeBusy request for the enabled calendars over a padded day window
    (the ±1 day margin matches the calendar window so events in any UTC
    offset are covered). `calendarIds` are format-validated, deduped and
-   capped at 10; none → ['primary']. Non-ISO dates → null (400). */
+   capped at 10; none → ['primary']. Non-ISO dates → null (400). F3: the
+   window is clamped at MAX_FREEBUSY_DAYS (62) — freeBusy.query accepts an
+   unbounded timeMin/timeMax pair, and a crafted ~12,000-year span must
+   answer invalid_window instead of reaching Google. A reversed window is
+   not a range and is rejected too. */
+export const MAX_FREEBUSY_DAYS = 62;
+
 export function buildFreebusyRequest(input = {}) {
   const from = typeof input.from === 'string' ? input.from : '';
   const to = typeof input.to === 'string' ? input.to : '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return null;
+  const spanMs = Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`);
+  const spanDays = Math.round(spanMs / 86400e3);
+  if (!Number.isFinite(spanDays) || spanDays < 0 || spanDays > MAX_FREEBUSY_DAYS) return null;
   const pad = expandDayRange(from, to);
   const ids = [];
   for (const v of Array.isArray(input.calendarIds) ? input.calendarIds : []) {

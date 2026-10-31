@@ -25,6 +25,15 @@ import {
   mergeCalendarEvents,
   ensureGooglePrefs,
   mapGmailMessage,
+  // review fixes F1–F6
+  shouldFetchDrafts,
+  draftSendPlan,
+  MAX_FREEBUSY_DAYS,
+  BULK_MAX,
+  bulkSelectionWarning,
+  refilterSelection,
+  busyBarLayout,
+  calendarWindowOutcome,
 } from '../supabase/functions/_shared/google-pure.js';
 
 /* ---------- AC1 · drafts mapping ---------- */
@@ -358,4 +367,132 @@ test('mapGmailMessage maps labelIds: starred + full labels list', () => {
   const bare = mapGmailMessage({ id: 'm2', payload: { headers: [] } });
   assert.equal(bare.starred, false, 'no labels → not starred');
   assert.deepEqual(bare.labels, []);
+});
+
+/* ---------- review fixes F1–F6 (gdepth fix loop) — pure contracts ---------- */
+
+/* F1 — Drafts fetch guard. The Drafts page calls ensureGmailDrafts() on
+   every synchronous render; without a settled-state guard the view loops
+   fetch → render → fetch forever (edge + Gmail quota burn). The guard is
+   a pure contract: only an armed state may fetch, and ONLY an explicit
+   reset (chip click / Retry / a draft mutation) re-arms it. */
+test('F1 shouldFetchDrafts blocks every settled state and arms only idle', () => {
+  for (const settled of ['loading', 'ok', 'empty', 'error']) {
+    assert.equal(shouldFetchDrafts(settled), false, `"${settled}" is settled/terminal — must never refetch on render`);
+  }
+  for (const armed of ['idle', 'off', undefined]) {
+    assert.equal(shouldFetchDrafts(armed), true, `"${String(armed)}" arms exactly one fetch`);
+  }
+});
+
+/* F2 — Draft-aware send plan. A send from a draft-aware compose must
+   update the STORED draft with the current edited form first (PATCH
+   gmail/draft) and only then send the draft (POST gmail/draft/send) —
+   otherwise the stale stored draft goes out under a 'Message sent'
+   toast. Without a draftId the direct send path is unchanged. */
+test('F2 draftSendPlan routes draft sends through update-then-send', () => {
+  const p = draftSendPlan('draft-abc');
+  assert.equal(p.updateThenSend, true, 'a draftId means: update the draft first');
+  assert.equal(p.draftId, 'draft-abc');
+  for (const none of ['', null, undefined]) {
+    assert.deepEqual(draftSendPlan(none), { directSend: true }, `no draftId (${String(none)}) → direct send, unchanged path`);
+  }
+});
+
+/* F3 — freebusy window clamp. freeBusy.query accepts an unbounded
+   timeMin/timeMax pair; a crafted ~12,000-year span must answer
+   invalid_window (null) instead of reaching Google. 62 days is the
+   service ceiling (a generous grid window); same-day and ≤62-day
+   windows pass. */
+test('F3 buildFreebusyRequest rejects windows wider than 62 days', () => {
+  assert.equal(MAX_FREEBUSY_DAYS, 62);
+  const day = buildFreebusyRequest({ from: '2026-10-31', to: '2026-10-31', calendarIds: [] });
+  assert.ok(day && day.timeMin.startsWith('2026-10-30'), 'same-day request still padded ±1');
+  const wide = buildFreebusyRequest({ from: '2026-01-01', to: '2026-03-04', calendarIds: [] });
+  assert.ok(wide, 'exactly 62 days is allowed');
+  for (const [from, to] of [
+    ['2026-01-01', '2026-03-05'], // 63 days — one day over
+    ['0001-01-01', '9999-12-31'], // the ~12,000-year span from the review
+  ]) {
+    assert.equal(buildFreebusyRequest({ from, to, calendarIds: [] }), null, `${from}..${to} → null (400 invalid_window)`);
+  }
+  assert.equal(buildFreebusyRequest({ from: '2026-11-05', to: '2026-11-01', calendarIds: [] }), null, 'reversed window is not a valid range');
+});
+
+/* F4 — bulk selection semantics. The server clamps ids at 50; the UI
+   must never LOOK like it will act on more — over the clamp the action
+   is refused with an honest message (never a silent truncation). A
+   changed list (chip/filter switch, search) refilters the selection to
+   the ids still in view, and reports how many dropped (for the toast). */
+test('F4 bulkSelectionWarning enforces the 50-id clamp honestly', () => {
+  assert.equal(BULK_MAX, 50);
+  assert.equal(bulkSelectionWarning(0), '');
+  assert.equal(bulkSelectionWarning(1), '');
+  assert.equal(bulkSelectionWarning(50), '', 'exactly 50 is the allowed maximum');
+  const over = bulkSelectionWarning(51);
+  assert.match(over, /at most 50/, 'the honest message names the limit');
+  assert.match(over, /51/, 'the message names the actual count');
+});
+test('F4 refilterSelection keeps only ids still in view and reports the drop count', () => {
+  const sel = new Set(['a', 'b', 'c']);
+  const out = refilterSelection(sel, ['b', 'x']);
+  assert.deepEqual([...out.kept], ['b'], 'only the still-visible id survives');
+  assert.equal(out.dropped, 2, 'the dropped count feeds the honest toast');
+  assert.deepEqual([...refilterSelection(null, ['a']).kept], []);
+  assert.equal(refilterSelection(null, []).dropped, 0);
+  assert.equal(refilterSelection(new Set(['a']), null).dropped, 1, 'no visible ids → everything drops');
+  assert.equal(refilterSelection(new Set(['a']), ['a']).dropped, 0);
+});
+
+/* F5 — busy-strip layout. ensureFreebusy clips blocks to the TRUE local
+   day window ([00:00, next 00:00) — 23 h on a spring-forward day, 25 h
+   on a fall-back day); the bars must divide by that SAME span, never a
+   fixed 86400e3 (a late-evening block would overflow the strip or leave
+   it short on DST-shifted days). Epoch ms are passed in, so the math is
+   timezone-independent. */
+test('F5 busyBarLayout positions bars against the real day span', () => {
+  const h = 3600e3;
+  // 23-hour day (spring forward): the last local hour must reach 100%
+  const short = busyBarLayout([{ s: 1000 + 22 * h, e: 1000 + 23 * h }], 1000, 1000 + 23 * h);
+  assert.equal(short.length, 1);
+  assert.ok(Math.abs(short[0].left + short[0].width - 100) < 1e-6, 'end-of-day block reaches 100% on a 23 h day (fixed-24h math stops at ~95.8%)');
+  // 25-hour day (fall back): the repeated hour stays inside the strip
+  const long1 = busyBarLayout([{ s: 1000 + 24 * h, e: 1000 + 25 * h }], 1000, 1000 + 25 * h);
+  assert.ok(Math.abs(long1[0].left - 96) < 1e-6, '24 h into a 25 h day = 96% (fixed-24h math overflows to ~99.4/100%)');
+  assert.ok(Math.abs(long1[0].width - 4) < 1e-6);
+  // normal day: full-day block spans the strip, blocks outside are dropped
+  const full = busyBarLayout([{ s: 1000, e: 1000 + 24 * h }], 1000, 1000 + 24 * h);
+  assert.ok(full[0].left === 0 && Math.abs(full[0].width - 100) < 1e-6);
+  assert.deepEqual(busyBarLayout([{ s: 500, e: 600 }], 1000, 1000 + h), [], 'fully outside the day → dropped');
+  assert.deepEqual(busyBarLayout(null, 1000, 1000 + h), [], 'no blocks → no bars');
+  assert.deepEqual(busyBarLayout([{ s: 1000, e: 1000 + h }], 1000, 999), [], 'inverted/zero window → no bars');
+});
+
+/* F6 — multi-calendar window outcome. One failing calendar must not sink
+   the fetch: partial results render and the failure is NAMED (via the
+   calendarList summary, raw id as fallback); a window whose EVERY
+   calendar failed is an honest error. */
+test('F6 calendarWindowOutcome separates ok / partial / error / empty', () => {
+  const cals = [
+    { id: 'a@group.calendar.google.com', summary: 'Work' },
+    { id: 'b@group.calendar.google.com', summary: 'Private' },
+  ];
+  const ev = id => ({ id, summary: 'x' });
+  assert.deepEqual(calendarWindowOutcome([ev('1'), ev('2')], [], cals), { state: 'ok', names: [] });
+  const partial = calendarWindowOutcome([ev('1')], [{ calendarId: 'b@group.calendar.google.com', status: 404 }], cals);
+  assert.equal(partial.state, 'partial', 'partial results still render');
+  assert.deepEqual(partial.names, ['Private'], 'the failing calendar is named via its summary');
+  const all = calendarWindowOutcome(
+    [],
+    [
+      { calendarId: 'a@group.calendar.google.com', status: 404 },
+      { calendarId: 'b@group.calendar.google.com', status: 500 },
+    ],
+    cals,
+  );
+  assert.equal(all.state, 'error', 'every calendar failed → honest error');
+  assert.deepEqual(all.names, ['Work', 'Private']);
+  assert.deepEqual(calendarWindowOutcome([], [], cals), { state: 'empty', names: [] });
+  const junk = calendarWindowOutcome([ev('1')], [{ status: 404 }, { calendarId: 'zzz@group.calendar.google.com', status: 404 }], cals);
+  assert.deepEqual(junk.names, ['zzz@group.calendar.google.com'], 'junk error entries ignored; unknown ids fall back to the raw id');
 });
