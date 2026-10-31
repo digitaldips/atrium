@@ -26,7 +26,7 @@
 import { S } from './store.js';
 import { sb } from './supabase.js';
 import { render } from '../shell/render.js';
-import { shouldFetch, shouldFetchWindow } from '../../supabase/functions/_shared/google-pure.js';
+import { errorFromEndpoint, shouldFetch, shouldFetchWindow } from '../../supabase/functions/_shared/google-pure.js';
 
 const FN_BASE = () => (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '') + '/functions/v1';
 
@@ -60,7 +60,7 @@ async function gFetch(path, { method = 'GET', params, body } = {}) {
   });
   const out = await res.json().catch(() => ({}));
   if (res.status === 401) throw new Error(out.error === 'unauthorized' ? 'Your session expired — sign in again.' : out.error || 'Not authorized.');
-  if (!res.ok && !('connected' in out)) throw new Error(out.error || `Request failed (${res.status})`);
+  if (!res.ok && !('connected' in out)) throw new Error(errorFromEndpoint(out, res.status));
   return out;
 }
 

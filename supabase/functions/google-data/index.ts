@@ -38,6 +38,7 @@ import {
   mapGmailMessage,
   mapThread,
   monthWindow,
+  parseCompose,
   validGmailQuery,
 } from '../_shared/google-pure.js';
 import { SUPABASE_URL, action, corsHeaders, json, unauthorized, getAuthUser, getIntegration, refreshAccessToken } from '../_shared/edge.ts';
@@ -231,13 +232,9 @@ Deno.serve(async (req: Request) => {
         const auth = await withAccessToken(req);
         if (auth instanceof Response) return auth;
         const body = await readJson(req);
-        const to = typeof body?.to === 'string' ? body.to.trim() : '';
-        const text = typeof body?.body === 'string' ? body.body : '';
-        if (!to || to.length > 1000) return json(req, { error: 'invalid_recipient' }, 400);
-        if (text.length > 200_000) return json(req, { error: 'body_too_long' }, 400);
-        const subject = typeof body?.subject === 'string' ? body.subject : '';
-        if (subject.length > 998) return json(req, { error: 'subject_too_long' }, 400);
-        const cc = typeof body?.cc === 'string' ? body.cc : '';
+        const parsed = parseCompose(body);
+        if ('error' in parsed) return json(req, parsed, 400);
+        const { to, cc, subject, text } = parsed;
         const inReplyTo = typeof body?.inReplyTo === 'string' ? body.inReplyTo.slice(0, 998) : '';
         const references = typeof body?.references === 'string' ? body.references.slice(0, 4000) : '';
         const threadId = typeof body?.threadId === 'string' ? safeId(body.threadId) : '';

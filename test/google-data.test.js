@@ -36,6 +36,9 @@ import {
   eventTimeRange,
   monthWindow,
   expandDayRange,
+  normalizeAttendeeEmails,
+  parseCompose,
+  errorFromEndpoint,
 } from '../supabase/functions/_shared/google-pure.js';
 
 /* ---------- scopes constant (Operance parity: FULL access) ---------- */
@@ -738,4 +741,66 @@ test('clampNum clamps to the range with an honest fallback', () => {
   assert.equal(clampNum('abc', { min: 1, max: 50, fallback: 20 }), 20);
   assert.equal(clampNum('', { min: 1, max: 50, fallback: 20 }), 20);
   assert.equal(clampNum('7.9', { min: 1, max: 50, fallback: 20 }), 8, 'rounds to an integer');
+});
+
+/* ---------- attendee normalization (F4: display-form addresses) ---------- */
+
+test('normalizeAttendeeEmails reduces display-form addresses to the bare address', () => {
+  assert.deepEqual(
+    normalizeAttendeeEmails(['Wesley Romeijnders <wesley@operanceai.com>']),
+    ['wesley@operanceai.com'],
+    'Name <addr> contributes only the address',
+  );
+  assert.deepEqual(normalizeAttendeeEmails(['<x@y.z>']), ['x@y.z'], 'fully-wrapped form too');
+  assert.deepEqual(normalizeAttendeeEmails(['Wes@Example.com', 'ops@example.com']), ['wes@example.com', 'ops@example.com'], 'bare form still lowercased');
+});
+
+test('normalizeAttendeeEmails drops entries that never reduce to a bare address', () => {
+  assert.deepEqual(normalizeAttendeeEmails(['not-an-email', '', '   ']), []);
+  assert.deepEqual(normalizeAttendeeEmails(['a<b@c.d']), [], 'stray angle bracket is not an address');
+  assert.deepEqual(normalizeAttendeeEmails(['a,b@c.d']), [], 'commas never survive into a Google attendee');
+  assert.deepEqual(normalizeAttendeeEmails(['"a"@b.c']), [], 'quoted local parts are rejected');
+  assert.deepEqual(normalizeAttendeeEmails('nope'), [], 'non-array input yields []');
+  assert.deepEqual(normalizeAttendeeEmails(['a@b', 'a b@c.d']), [], 'no-dot domains and spaces are dropped');
+});
+
+test('normalizeAttendeeEmails dedupes and caps at 50', () => {
+  assert.deepEqual(normalizeAttendeeEmails(['A@B.co', 'a@b.co', 'a@b.co']), ['a@b.co']);
+  const many = Array.from({ length: 60 }, (_, i) => `u${i}@x.co`);
+  assert.equal(normalizeAttendeeEmails(many).length, 50, 'default cap 50');
+  assert.equal(normalizeAttendeeEmails(many, 3).length, 3, 'cap is an argument');
+});
+
+test('buildEventResource sends Google only bare attendee emails (display form reduced)', () => {
+  const res = buildEventResource({
+    title: 'Sync',
+    start: { date: '2026-11-05' },
+    end: { date: '2026-11-06' },
+    attendees: ['Wesley Romeijnders <wesley@operanceai.com>', '<other@x.co>', 'not-an-email'],
+  });
+  assert.deepEqual(res.attendees, [{ email: 'wesley@operanceai.com' }, { email: 'other@x.co' }], 'never an angle-bracket address to Google');
+});
+
+/* ---------- compose request parsing (F5: cc was the one uncapped header) ---------- */
+
+test('parseCompose validates the compose request and caps every header', () => {
+  assert.equal(parseCompose({ to: 'a@b.co', body: 'hi', subject: 's', cc: '' }).to, 'a@b.co', 'normalized fields come back');
+  assert.equal(parseCompose({ to: 'a@b.co' }).error, undefined, 'cc is optional');
+  assert.equal(parseCompose({ to: '' }).error, 'invalid_recipient', 'to is required');
+  assert.equal(parseCompose({}).error, 'invalid_recipient', 'missing to');
+  assert.equal(parseCompose({ to: 'x'.repeat(1001) }).error, 'invalid_recipient', 'to over cap');
+  assert.equal(parseCompose({ to: 'a@b.co', cc: 'x'.repeat(1001) }).error, 'invalid_recipient', 'cc is capped like to');
+  assert.equal(parseCompose({ to: 'a@b.co', cc: 'x'.repeat(1000) }).error, undefined, 'cc at the cap passes');
+  assert.equal(parseCompose({ to: 'a@b.co', subject: 'x'.repeat(999) }).error, 'subject_too_long');
+  assert.equal(parseCompose({ to: 'a@b.co', body: 'x'.repeat(200001) }).error, 'body_too_long');
+});
+
+/* ---------- endpoint error surface (F6: the 502 detail must reach the UI) ---------- */
+
+test('errorFromEndpoint keeps the honest code and appends the Google detail verbatim', () => {
+  assert.equal(errorFromEndpoint({ error: 'google_error', detail: "Google's own message" }, 502), "google_error: Google's own message");
+  assert.equal(errorFromEndpoint({ error: 'google_error', detail: '   ' }, 502), 'google_error', 'blank detail adds nothing');
+  assert.equal(errorFromEndpoint({}, 502), 'Request failed (502)');
+  assert.equal(errorFromEndpoint({ error: 'forbidden' }), 'forbidden');
+  assert.equal(errorFromEndpoint(null, 502), 'Request failed (502)');
 });

@@ -48,9 +48,11 @@ DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
   if (data.attrName === 'style') data.keepAttr = false;
 });
 
-/* Kept links open sandboxed, never in-app, never referrer-leaking. */
+/* Kept links open sandboxed, never in-app, never referrer-leaking.
+   AREA (image-map hotspots in mail HTML) gets the identical hardening:
+   its href is a navigation vector exactly like an anchor's. */
 DOMPurify.addHook('afterSanitizeAttributes', node => {
-  if (node.tagName === 'A') {
+  if (node.tagName === 'A' || node.tagName === 'AREA') {
     node.setAttribute('target', '_blank');
     node.setAttribute('rel', 'noopener noreferrer nofollow');
   }

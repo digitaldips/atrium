@@ -451,9 +451,48 @@ export function buildMime(msg = {}) {
   return b64urlFromBytes(new TextEncoder().encode(lines.join('\r\n') + '\r\n\r\n' + String(msg.body ?? '')));
 }
 
+/* Compose request body → normalized header fields, with the send
+   endpoint's cap contract: `to` is required and capped at 1000, the
+   optional `cc` line is capped at 1000 too (it lands in a header exactly
+   like `to`), subject ≤ 998 and body ≤ 200k. Returns { error } carrying
+   the code the endpoint answers 400 with, or the normalized fields. */
+export function parseCompose(body) {
+  const to = typeof body?.to === 'string' ? body.to.trim() : '';
+  const text = typeof body?.body === 'string' ? body.body : '';
+  const subject = typeof body?.subject === 'string' ? body.subject : '';
+  const cc = typeof body?.cc === 'string' ? body.cc : '';
+  if (!to || to.length > 1000) return { error: 'invalid_recipient' };
+  if (text.length > 200_000) return { error: 'body_too_long' };
+  if (subject.length > 998) return { error: 'subject_too_long' };
+  if (cc.length > 1000) return { error: 'invalid_recipient' };
+  return { to, cc, subject, text };
+}
+
 /* ---------- calendar event resource builder (insert/update) ---------- */
 
-const EVENT_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/* Bare-address charset: RFC 5322 atom characters only, compared
+   lowercase. Angle brackets, quotes, commas, semicolons, colons and
+   whitespace never validate — a display-form entry can only survive by
+   being reduced to its bare address first (normalizeAttendeeEmails). */
+const EVENT_EMAIL_RE = /^[a-z0-9!#$%&'*+/=?^_`{|}~.-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+$/;
+
+/* Attendee entries arrive as the user typed them: bare addresses
+   (a@b.co) or display form ("Name <a@b.co>"). A wrapped entry contributes
+   only the address between the angle brackets; anything that does not
+   reduce to a valid bare address is dropped (invalid entries never reach
+   Google). Deduped, lowercased, capped at `max`. */
+export function normalizeAttendeeEmails(raw, max = 50) {
+  const emails = [];
+  for (const a of Array.isArray(raw) ? raw : []) {
+    let s = eventText(a, 254);
+    const wrapped = s.match(/<([^<>]*)>/);
+    if (wrapped) s = wrapped[1];
+    const email = s.trim().toLowerCase();
+    if (EVENT_EMAIL_RE.test(email) && !emails.includes(email)) emails.push(email);
+    if (emails.length >= max) break;
+  }
+  return emails;
+}
 
 function eventText(v, max) {
   return (
@@ -496,12 +535,7 @@ export function buildEventResource(input) {
   if (location) res.location = location;
   const description = eventText(input.description, 8000);
   if (description) res.description = description;
-  const emails = [];
-  for (const a of Array.isArray(input.attendees) ? input.attendees : []) {
-    const email = eventText(a, 254).toLowerCase();
-    if (EVENT_EMAIL_RE.test(email) && !emails.includes(email)) emails.push(email);
-    if (emails.length >= 50) break;
-  }
+  const emails = normalizeAttendeeEmails(input.attendees);
   if (emails.length) res.attendees = emails.map(email => ({ email }));
   return res;
 }
@@ -522,6 +556,16 @@ export function clampNum(v, { min, max, fallback }) {
   const n = Number(v);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+/* Endpoint failure body → the honest user-facing message. Keeps the
+   error code the edge function chose and appends Google's own detail
+   verbatim when googleError surfaced one (capped to 300 chars there) —
+   "show Google's message" only works if the detail survives the throw. */
+export function errorFromEndpoint(out, status) {
+  const base = out && typeof out.error === 'string' && out.error ? out.error : status ? `Request failed (${status})` : 'Request failed';
+  const detail = out && typeof out.detail === 'string' ? out.detail.trim() : '';
+  return detail ? `${base}: ${detail}` : base;
 }
 
 /* ---------- scope display helper ---------- */
