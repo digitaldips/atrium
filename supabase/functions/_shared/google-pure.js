@@ -178,8 +178,9 @@ export function mapGmailMessage(m) {
      cat        'all' merges both kinds; 'mention' | 'assign' | 'comment' |
                 'update' show notifs of that type only; 'gmail' shows mail
                 only — a workspace notif can never leak into the gmail view.
-                Unknown cats fall back to the merged 'all' semantics.
-     unreadOnly filters read notifs AND read mail together (the Inbox's
+                                Unknown cats yield empty rows (matching pre-merge behavior,
+                                where an unknown filter matched nothing); 'all' is the merge.
+                    unreadOnly filters read notifs AND read mail together (the Inbox's
                 'Unread only' toggle applies across both kinds).
    Missing/unparseable timestamps sort as 0 (never NaN) so one malformed
    row cannot poison the ordering; equal times keep insertion order
