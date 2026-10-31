@@ -72,6 +72,9 @@ export function go(route, params = {}, opt = {}) {
   S.ui.pop = null;
   S.ui.composer = null;
   S.ui.editCell = null;
+  /* The one-shot Google consent result banner lives only while the user
+     stays on its Settings page. */
+  S.ui.googleReturn = null;
   if (!opt.keepDrawer && S.ui.drawer && innerWidth < 900) S.ui.drawer = null;
   // Pages render instantly; motion (not a fake wait) carries the transition.
   clearTimeout(go._t);

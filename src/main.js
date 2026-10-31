@@ -49,6 +49,7 @@ import './pages/design-system.js';
 import './actions/actions.js';
 import './actions/crm.js';
 import './actions/events.js';
+import './actions/google.js';
 import './actions/keyboard.js';
 import './actions/drag-drop.js';
 import './features/teams.js';
@@ -63,6 +64,7 @@ import { ROUTE_NAMES, render, go } from './shell/render.js';
 import { toast } from './ui/toast.js';
 import { sb, supabaseConfigured } from './core/supabase.js';
 import { isAuthedSession, resolveAuthRoute } from './core/workspace-api.js';
+import { loadGoogleStatus } from './core/google.js';
 
 /* Boot: a real Supabase session gates the app. Signed in -> load the
    workspace document from Postgres (bootstrap from seed on first login),
@@ -78,10 +80,17 @@ async function init() {
     document.body.appendChild(l);
   }
   const h = (location.hash || '').slice(1);
+  /* The Google consent round-trip lands on the app as #settings?google=ok|error.
+     Parse the hash route + its query before the plain-route lookup. */
+  const qIdx = h.indexOf('?');
+  const hashRoute = qIdx >= 0 ? h.slice(0, qIdx) : h;
+  const hashQuery = qIdx >= 0 ? new URLSearchParams(h.slice(qIdx + 1)) : null;
+  const googleReturn = hashQuery?.get('google');
+  if (googleReturn) S.ui.googleReturn = { google: googleReturn, reason: hashQuery.get('reason') || '' };
   const authRoutes = ['login', 'onboarding'];
   const session = supabaseConfigured ? (await sb.auth.getSession()).data?.session : null;
   if (isAuthedSession(session)) {
-    const routeHash = h && ROUTE_NAMES[h] ? h : null;
+    const routeHash = hashRoute && ROUTE_NAMES[hashRoute] ? hashRoute : null;
     if ((await startWorkspace(session)) === 'login') {
       /* Fail closed: server unreachable and no trusted cache of our own. */
       S.ui.auth = 'login';
@@ -90,8 +99,15 @@ async function init() {
       return;
     }
     S.ui.route = routeHash || S.prefs.home || 'home';
+    /* A consent result lands on the Integrations section so its banner is seen. */
+    if (googleReturn) S.ui.settings = 'integrations';
+    /* Google connection state: fetched once per session at boot, and again
+       after connect (this boot carries ?google=ok) or disconnect. Fire and
+       forget — the surfaces settle when it lands. */
+    loadGoogleStatus();
+    if (googleReturn && routeHash) history.replaceState(null, '', `#${routeHash}`);
   } else {
-    S.ui.auth = resolveAuthRoute(authRoutes.includes(h) ? h : 'login', null);
+    S.ui.auth = resolveAuthRoute(authRoutes.includes(hashRoute) ? hashRoute : 'login', null);
   }
   render();
 }

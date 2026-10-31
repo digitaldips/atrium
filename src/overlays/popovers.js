@@ -8,6 +8,7 @@ import { focusKey, render } from '../shell/render.js';
 import { FIELDS, viewOf } from '../shell/view-engine.js';
 import { TCOLS } from '../views/table.js';
 import { startOfWeek } from '../views/calendar.js';
+import { eventDateKey, eventTimeLabel, eventTimeRange } from '../../supabase/functions/_shared/google-pure.js';
 import { ctxMenu } from './context-menu.js';
 
 export function openPop(el, extra = {}) {
@@ -324,9 +325,16 @@ export function popHtml(p) {
     case 'daylist': {
       const ds = p.date;
       const evs = D().events.filter(e => e.date === ds);
+      const gevs = (S.ui.gevs || []).filter(g => eventDateKey(g) === ds);
       const ts = allTasks().filter(x => x.due === ds);
       inner =
         `<div class="mh">${fmtDate(ds, true)}</div>` +
+        gevs
+          .map(
+            g =>
+              `<button class="mi" data-a="pop" data-pop="gevent" data-id="${esc(g.id)}">${ic('calendar-days', 14)}<span class="trunc">${esc(g.summary || '(untitled event)')}</span><span class="r">${esc(eventTimeLabel(g))}</span></button>`,
+          )
+          .join('') +
         evs
           .map(
             e =>
@@ -346,6 +354,21 @@ export function popHtml(p) {
       const e = D().events.find(x => x.id === p.id);
       const pr = proj(e.project);
       inner = `<div style="padding:10px 10px 6px"><div class="row" style="gap:8px;margin-bottom:6px"><span class="pdot" style="--c:${pColor(pr)};border-radius:50%"></span><b style="font-size:14px;font-weight:600">${esc(e.title)}</b></div><div class="muted" style="font-size:12.5px;display:flex;flex-direction:column;gap:4px"><span class="row" style="gap:6px">${ic('calendar', 13)}${fmtDate(e.date, true)} · ${e.time}</span><span class="row" style="gap:6px">${ic('folder', 13)}${esc(pr.name)}</span><span class="row" style="gap:6px">${ic('users', 13)}${avStack(pr.members, 5)}</span></div></div><div class="msep"></div><button class="mi" data-a="go" data-r="project" data-id="${pr.id}" data-tab="overview">${ic('arrow-up-right', 14)}Open project</button>`;
+      style = 'width:270px';
+      break;
+    }
+    case 'gevent': {
+      const g = (S.ui.gevs || []).find(x => x.id === p.id);
+      if (!g) {
+        inner = `<div class="mi faint" style="cursor:default">Event unavailable — reconnect Google Calendar.</div>`;
+        style = 'width:250px';
+        break;
+      }
+      inner =
+        `<div style="padding:10px 10px 6px"><div class="row" style="gap:8px;margin-bottom:6px"><span class="pdot" style="--c:var(--gcal);border-radius:50%"></span><b style="font-size:14px;font-weight:600">${esc(g.summary || '(untitled event)')}</b></div><div class="muted" style="font-size:12.5px;display:flex;flex-direction:column;gap:4px"><span class="row" style="gap:6px">${ic('calendar', 13)}${esc(eventTimeRange(g))}</span>${g.location ? `<span class="row" style="gap:6px">${ic('map-pin', 13)}${esc(g.location)}</span>` : ''}${g.htmlLink ? `<span class="row" style="gap:6px">${ic('external-link', 13)}Google Calendar</span>` : ''}</div></div>` +
+        (g.htmlLink
+          ? `<div class="msep"></div><a class="mi" href="${esc(g.htmlLink)}" target="_blank" rel="noopener noreferrer">${ic('arrow-up-right', 14)}Open in Google Calendar</a>`
+          : '');
       style = 'width:270px';
       break;
     }

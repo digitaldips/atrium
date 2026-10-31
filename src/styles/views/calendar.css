@@ -196,3 +196,22 @@
   font-size: var(--fs-2xs);
   color: var(--text-3);
 }
+
+/* ---------- Google Calendar events (distinct from task chips + internal events) ---------- */
+.cev.gev,
+.wcard.gev {
+  --gcal: #1a73e8;
+  background: color-mix(in srgb, var(--gcal) 13%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--gcal) 38%, transparent);
+}
+.cev.gev {
+  border-style: solid;
+}
+.cev.gev svg,
+.wcard.gev svg {
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+.wcard.gev .t {
+  color: color-mix(in srgb, var(--gcal) 75%, var(--text));
+}

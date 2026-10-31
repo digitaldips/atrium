@@ -8,6 +8,7 @@ import { av, pIcon } from '../ui/helpers.js';
 import { permsTable, teamsGrid } from './members.js';
 import { page404 } from './errors.js';
 import { SHORTCUTS } from '../overlays/modals.js';
+import { googleStatus } from '../core/google.js';
 
 export const SET_NAV = [
   [
@@ -19,6 +20,7 @@ export const SET_NAV = [
       ['datetime', 'Date & time', 'clock'],
     ],
   ],
+  ['Integrations', [['integrations', 'Integrations', 'plug']]],
   [
     'Workspace',
     [
@@ -88,6 +90,8 @@ export function settingsBody(sec, title) {
   const np = d.notifPrefs;
   const H = lead => `<h1>${title}</h1><p class="lead">${lead}</p>`;
   switch (sec) {
+    case 'integrations':
+      return googleIntegrationsBody(H);
     case 'workspace':
       return (
         H('Your workspace name, address, and identity.') +
@@ -420,6 +424,49 @@ export function settingsBody(sec, title) {
       );
   }
   return page404();
+}
+/* ---------- Integrations · Google (Gmail + Calendar, read-only) ---------- */
+function googleReturnCopy(ret) {
+  const map = {
+    denied: 'The consent screen was dismissed, so no access was granted.',
+    norefresh: 'Google did not return a refresh token, so the connection cannot be kept. Try connecting again.',
+    no_refresh_token: 'Google did not return a refresh token, so the connection cannot be kept. Try connecting again.',
+    exchange: "The authorization code couldn't be exchanged.",
+    invalid_code: "The authorization code couldn't be exchanged.",
+  };
+  return map[ret.reason] || map[ret.google] || 'The Google sign-in round-trip did not complete. Try again.';
+}
+export function googleIntegrationsBody(H) {
+  const g = googleStatus();
+  const ret = S.ui.googleReturn;
+  const banner = ret
+    ? ret.google === 'ok'
+      ? `<div class="alert ok" style="margin-bottom:14px">${ic('circle-check', 15)}<span><b>Google connected.</b> Your Gmail inbox shows up in Inbox → Gmail, and your Google Calendar on the Calendar page.</span></div>`
+      : `<div class="alert danger" style="margin-bottom:14px">${ic('triangle-alert', 15)}<div><b>Google wasn't connected.</b><div class="muted" style="margin-top:2px">${esc(googleReturnCopy(ret))}</div></div></div>`
+    : '';
+  const row = g.connected
+    ? srow(
+        `<span class="row" style="gap:10px">${ic('mail', 15)}<b style="font-weight:500">Google</b><span class="badge green">${ic('check', 11)}Connected</span></span>`,
+        g.email
+          ? `Connected as <b>${esc(g.email)}</b>. Atrium reads your Gmail inbox and Calendar events — read-only; it can never send mail or change events.`
+          : 'Atrium reads your Gmail inbox and Calendar events — read-only; it can never send mail or change events.',
+        `<button class="btn btn-danger-ghost btn-sm" data-a="googleDisconnect">Disconnect</button>`,
+      )
+    : srow(
+        `<span class="row" style="gap:10px">${ic('mail', 15)}<b style="font-weight:500">Google</b><span class="badge">${g.loaded === false && g.error ? 'Unavailable' : 'Not connected'}</span></span>`,
+        'Show your Gmail inbox under Inbox → Gmail and your Google Calendar events on the Calendar page. Read-only access only.',
+        g.loaded === false && g.error
+          ? `<button class="btn btn-secondary btn-sm" data-a="googleStatusRetry">Retry</button>`
+          : g.loaded
+            ? `<button class="btn btn-primary btn-sm" data-a="googleConnect">${ic('mail', 14)}Connect</button>`
+            : `<span class="faint" style="font-size:12.5px">Checking connection…</span>`,
+      );
+  return (
+    H('Connect Atrium to the tools you already use.') +
+    banner +
+    `<div class="sblock" style="margin-top:0"><h2>Google</h2>${row}</div>
+    <p class="hint" style="margin-top:12px">Atrium requests only <b>gmail.readonly</b> and <b>calendar.events.readonly</b>. Tokens are stored server-side (never in the browser) and can be removed any time with Disconnect.</p>`
+  );
 }
 export function strengthMeter(pw) {
   let s = 0;
