@@ -2,6 +2,7 @@
 import { TODAY, diffD, iso, parse, uid } from './utils.js';
 import { PCOLORS, TEAMS_SEED } from './constants.js';
 import { seed } from '../data/seed.js';
+import { ensureCrmData } from './crm.js';
 import { sb, getCurrentUser, setCurrentUser } from './supabase.js';
 import {
   applyUserIdentity,
@@ -141,7 +142,10 @@ export function save() {
    the in-memory state is trusted only when the cache was written by that
    same user; otherwise S is reset to seed and the foreign cache dropped. */
 export function bindCacheToUser(userId) {
-  if (isTrustedCache(saved, userId)) return true;
+  if (isTrustedCache(saved, userId)) {
+    ensureCrmData(S.data);
+    return true;
+  }
   S.data = seed();
   S.views = {};
   S.prefs = { ...DEFAULT_PREFS };
@@ -180,6 +184,7 @@ export async function hydrateWorkspace(session) {
       S.views = {};
       S.prefs = { ...DEFAULT_PREFS };
       applyUserIdentity(S, session.user);
+      ensureCrmData(S.data);
       await upsertWorkspaceDoc(sb, session.user.id, buildDocPayload(S.data, S.prefs, S.views), D().ws?.name);
       save();
       return 'bootstrapped';
@@ -188,6 +193,10 @@ export async function hydrateWorkspace(session) {
     S.data = doc.data;
     S.prefs = Object.assign({}, DEFAULT_PREFS, doc.prefs || {});
     S.views = doc.views || {};
+    /* CRM migration: docs created before the CRM feature lack clients/deals.
+       ensureCrmData only fills missing arrays — existing content is untouched
+       (zero-loss), and save() below persists the initialized doc. */
+    ensureCrmData(S.data);
     save();
     return 'loaded';
   } catch (err) {
@@ -236,6 +245,11 @@ export const tasksOf = pid => D().tasks.filter(t => t.project === pid && !t.arch
 export const allTasks = () => D().tasks.filter(t => !t.archived && canSee(proj(t.project)));
 export const isOver = t => t.due && t.status !== 'done' && diffD(parse(t.due), TODAY) < 0;
 export const commentsOf = tid => D().comments.filter(c => c.task === tid);
+/* ---------- CRM lookups (arrays exist after ensureCrmData; || [] is belt-and-braces) ---------- */
+export const crmClients = () => D().clients || [];
+export const crmDeals = () => D().deals || [];
+export const client = id => crmClients().find(c => c.id === id);
+export const deal = id => crmDeals().find(d => d.id === id);
 export function progressOf(pid) {
   const ts = tasksOf(pid);
   if (!ts.length) return 0;

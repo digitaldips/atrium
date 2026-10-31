@@ -1,0 +1,56 @@
+/* ============================================================
+   CRM · clients table + pipeline board (reuses board/table styles)
+   ============================================================ */
+/* Status/stage pill: same shape as the project status pill. */
+.cstat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.cstat i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--c);
+}
+
+/* Pipeline board: the task .board/.bcol styles carry the layout; only the
+   stage dot and a calmer column width are CRM-specific. */
+.stg-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c);
+  flex-shrink: 0;
+}
+.pipeline .bcol {
+  width: 264px;
+}
+.pipeline .kcard .desc {
+  margin: 0 0 2px;
+}
+.pipeline .kcard .meta .m {
+  font-size: 11.5px;
+}
+
+/* Client avatars in tables/detail: reuse .av, slightly calmer. */
+.clav {
+  font-size: 10.5px;
+}
+
+/* Client detail modal mini-list rows inherit .mini; keep the value column
+   aligned when titles wrap. */
+.modal .mini .num {
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+/* Clients table on narrow screens: the table scrolls horizontally
+   (overflow-x on the panel wrapper) — same behavior as the projects table. */

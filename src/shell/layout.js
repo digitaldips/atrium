@@ -14,6 +14,8 @@ import { pageInbox } from '../pages/inbox.js';
 import { pageNotifications } from '../pages/notifications.js';
 import { pageFavorites } from '../pages/favorites.js';
 import { pageProjects } from '../pages/projects.js';
+import { pageCrm } from '../pages/crm.js';
+import { pagePipeline } from '../pages/pipeline.js';
 import { pageMember, pageMembers, pageTeam, pageTeams } from '../pages/members.js';
 import { pageActivity } from '../pages/activity.js';
 import { pageSearch } from '../pages/search.js';
@@ -54,6 +56,8 @@ export function renderPage() {
       tasks: pageTasks,
       calendar: pageWsCalendar,
       timeline: pageWsTimeline,
+      crm: pageCrm,
+      pipeline: pagePipeline,
       members: pageMembers,
       member: pageMember,
       teams: pageTeams,
@@ -110,6 +114,11 @@ export function renderSidebar() {
         ${sItem('timeline', 'Timeline', 'chart-gantt')}
         ${sItem('members', 'Members', 'users')}
         ${sItem('activity', 'Activity', 'activity')}
+      </div>
+      <div class="sgroup">
+        <div class="sgroup-h">CRM</div>
+        ${sItem('crm', 'Clients', 'contact', { ct: (d.clients || []).length || '' })}
+        ${sItem('pipeline', 'Pipeline', 'briefcase', { ct: (d.deals || []).filter(x => x.stage !== 'won' && x.stage !== 'lost').length || '' })}
       </div>
       <div class="sgroup" id="side-projects">
         <div class="sgroup-h"><span>Projects</span><span class="sp"></span><button class="ibtn ibtn-xs" data-a="newProject" data-tip="New project  P" aria-label="New project">${ic('plus', 14)}</button></div>

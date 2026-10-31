@@ -6,6 +6,7 @@ import { mutate, toast } from '../ui/toast.js';
 import { fxSet, render } from '../shell/render.js';
 import { viewOf } from '../shell/view-engine.js';
 import { applyPatch, handleFiles, updateTask } from './actions.js';
+import { moveDeal } from './crm.js';
 
 export let DRAG = null;
 export function clearDropMarks() {
@@ -18,8 +19,9 @@ document.addEventListener('dragstart', e => {
   const card = e.target.closest?.('[data-drag-card]'),
     row = e.target.closest?.('[data-drag-row]'),
     cal = e.target.closest?.('[data-drag-cal]'),
+    dl = e.target.closest?.('[data-drag-deal]'),
     sp = e.target.closest?.('[data-drag-proj]');
-  const el = card || row || cal || sp;
+  const el = card || row || cal || dl || sp;
   if (!el) return;
   DRAG = card
     ? { type: 'card', id: card.dataset.dragCard }
@@ -27,7 +29,9 @@ document.addEventListener('dragstart', e => {
       ? { type: 'row', id: row.dataset.dragRow }
       : cal
         ? { type: 'cal', id: cal.dataset.dragCal }
-        : { type: 'proj', id: sp.dataset.dragProj };
+        : dl
+          ? { type: 'deal', id: dl.dataset.dragDeal }
+          : { type: 'proj', id: sp.dataset.dragProj };
   e.dataTransfer.effectAllowed = 'move';
   try {
     e.dataTransfer.setData('text/plain', DRAG.id);
@@ -82,6 +86,30 @@ document.addEventListener('dragover', e => {
     if (line.nextSibling !== ref || line.parentNode !== body) body.insertBefore(line, ref);
     DRAG.col = col.dataset.dropCol;
     DRAG.before = after ? after.dataset.dragCard : null;
+  } else if (DRAG.type === 'deal') {
+    /* Pipeline columns reuse the board visuals: highlight the target stage
+       and show the drop line where the deal card will land. */
+    const col = e.target.closest('[data-drop-stage]');
+    if (!col) return;
+    e.preventDefault();
+    $$('.bcol.over').forEach(x => x !== col && x.classList.remove('over'));
+    col.classList.add('over');
+    const body = col.querySelector('[data-col-body]');
+    if (!body) return;
+    const cards = [...body.querySelectorAll('.kcard:not(.dragging)')];
+    const after = cards.find(c => {
+      const r = c.getBoundingClientRect();
+      return e.clientY < r.top + r.height / 2;
+    });
+    let line = $('.drop-line');
+    if (!line) {
+      line = document.createElement('div');
+      line.className = 'drop-line';
+    }
+    const ref = after || body.querySelector('.addcard');
+    if (line.nextSibling !== ref || line.parentNode !== body) body.insertBefore(line, ref);
+    DRAG.stage = col.dataset.dropStage;
+    DRAG.before = after ? after.dataset.dragDeal : null;
   } else if (DRAG.type === 'row') {
     const row = e.target.closest('.trow[data-task-row]');
     if (!row || row.dataset.taskRow === DRAG.id) return;
@@ -188,6 +216,8 @@ document.addEventListener('drop', e => {
     fxSet({ moved: t.id });
     updateTask(t.id, { due: d.day, ...(len != null ? { start: iso(addD(parse(d.day), -len)) } : {}) });
     toast(`Rescheduled “${t.title}” to ${fmtDate(d.day)}`, { ms: 2200 });
+  } else if (d.type === 'deal' && d.stage) {
+    moveDeal(d.id, d.stage);
   } else if (d.type === 'proj' && d.before && d.before !== d.id) {
     const o = D().projOrder.filter(x => x !== d.id);
     o.splice(o.indexOf(d.before), 0, d.id);

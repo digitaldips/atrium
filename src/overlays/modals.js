@@ -6,6 +6,7 @@ import { D, S, mem, pColor, proj, task, teamsList } from '../core/store.js';
 import { FT, av, filePrev, lbl, prPill, stPill } from '../ui/helpers.js';
 import { focusKey, render } from '../shell/render.js';
 import { teamModal } from '../features/teams.js';
+import { clientDetailHtml, clientFormHtml, dealFormHtml } from '../pages/crm.js';
 
 export function openModal(m) {
   S.ui.modalOpeners = S.ui.modalOpeners || [];
@@ -49,6 +50,12 @@ export function modalHtml(m) {
       return wrap('lg', shortcutsModal(H));
     case 'team':
       return wrap('', teamModal(m, H));
+    case 'client':
+      return wrap('', clientDetailHtml(m, H));
+    case 'clientForm':
+      return wrap('', clientFormHtml(m, H));
+    case 'dealForm':
+      return wrap('', dealFormHtml(m, H));
     case 'filePreview':
       return wrap('lg', filePreviewModal(m, H));
     case 'saveView':
