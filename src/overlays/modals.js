@@ -295,3 +295,38 @@ export function filePreviewModal(m, H) {
   ${m.tid ? `<div class="row faint" style="font-size:12.5px">${ic('link', 13)}Attached to <button class="link" data-a="openTask" data-id="${m.tid}">${esc(task(m.tid)?.title)}</button></div>` : ''}</div>
   <div class="modal-f"><button class="btn btn-secondary" data-a="copyLink" data-fid="${f.id}">${ic('link', 14)}Copy link</button><span class="sp"></span><button class="btn btn-primary" data-a="closeModal">Close</button></div>`;
 }
+
+/* ---------- Gmail compose / reply (FULL client) ---------- */
+export function composeModal(m, H) {
+  const f = S.ui.gform;
+  return `${H(m.reply ? 'Reply' : 'New message', 'Sent from your connected Gmail account.')}
+  <form class="modal-b" data-submit="gSend" style="gap:10px">
+    <div class="field"><label class="label" for="g-to">To</label><input class="input" id="g-to" data-in="gForm" data-f="to" value="${esc(f.to)}" placeholder="name@company.com, another@company.com" autofocus></div>
+    <div class="field"><label class="label" for="g-cc">Cc</label><input class="input" id="g-cc" data-in="gForm" data-f="cc" value="${esc(f.cc)}" placeholder="Optional"></div>
+    <div class="field"><label class="label" for="g-subject">Subject</label><input class="input" id="g-subject" data-in="gForm" data-f="subject" value="${esc(f.subject)}" placeholder="Subject"></div>
+    <div class="field grow"><label class="label" for="g-body">Message</label><textarea class="textarea" id="g-body" data-in="gForm" data-f="body" rows="9" placeholder="Write your message…">${esc(f.body)}</textarea></div>
+    ${f.error ? `<div class="alert danger">${ic('triangle-alert', 14)}<span>${esc(f.error)}</span></div>` : ''}
+  </form>
+  <div class="modal-f"><span class="faint hide-m" style="font-size:11.5px"><kbd>${MOD}</kbd> <kbd>↵</kbd></span><span class="sp"></span><button class="btn btn-secondary" data-a="closeModal">Cancel</button><button class="btn btn-primary" data-a="gSend" ${f.sending ? 'disabled aria-busy="true"' : ''}>${f.sending ? 'Sending…' : m.reply ? 'Send reply' : 'Send'}</button></div>`;
+}
+
+/* ---------- Google Calendar event create / edit (edit shares this modal) ---------- */
+export function gEventModal(m, H) {
+  const f = S.ui.gEvForm;
+  const editing = f.mode === 'edit';
+  return `${H(editing ? 'Edit event' : 'New event', editing ? 'Changes are saved to your Google Calendar and attendees are notified.' : 'Saved to your Google Calendar — attendees receive an invitation.')}
+  <form class="modal-b" data-submit="gEvSubmit" style="gap:10px">
+    <div class="field"><label class="label" for="g-ev-title">Title</label><input class="input" id="g-ev-title" data-in="gEvForm" data-f="title" value="${esc(f.title)}" placeholder="Event title" autofocus></div>
+    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <div class="field" style="flex:1;min-width:150px"><label class="label" for="g-ev-date">Date</label><input type="date" class="input" id="g-ev-date" data-in="gEvForm" data-f="date" value="${esc(f.date)}"></div>
+      <label class="row" style="gap:6px;font-size:12.5px;color:var(--text-2);cursor:pointer;padding-bottom:9px"><input type="checkbox" class="toggle" data-in="gEvForm" data-f="allDay" ${f.allDay ? 'checked' : ''}>All day</label>
+      <div class="field" style="width:110px;${f.allDay ? 'display:none' : ''}"><label class="label" for="g-ev-start">Starts</label><input type="time" class="input" id="g-ev-start" data-in="gEvForm" data-f="start" value="${esc(f.start)}"></div>
+      <div class="field" style="width:110px;${f.allDay ? 'display:none' : ''}"><label class="label" for="g-ev-end">Ends</label><input type="time" class="input" id="g-ev-end" data-in="gEvForm" data-f="end" value="${esc(f.end)}"></div>
+    </div>
+    <div class="field"><label class="label" for="g-ev-location">Location</label><input class="input" id="g-ev-location" data-in="gEvForm" data-f="location" value="${esc(f.location)}" placeholder="Optional"></div>
+    <div class="field"><label class="label" for="g-ev-attendees">Attendees</label><input class="input" id="g-ev-attendees" data-in="gEvForm" data-f="attendees" value="${esc(f.attendees)}" placeholder="name@company.com, another@company.com"><span class="hint">Comma-separated. Google emails an invitation to everyone.</span></div>
+    <div class="field"><label class="label" for="g-ev-desc">Description</label><textarea class="textarea" id="g-ev-desc" data-in="gEvForm" data-f="description" rows="3" placeholder="Optional">${esc(f.description)}</textarea></div>
+    ${f.error ? `<div class="alert danger">${ic('triangle-alert', 14)}<span>${esc(f.error)}</span></div>` : ''}
+  </form>
+  <div class="modal-f">${editing ? `<button class="btn btn-danger-ghost" data-a="gEventDelete" data-id="${esc(f.id)}">${ic('trash-2', 14)}Delete</button>` : ''}<span class="sp"></span><button class="btn btn-secondary" data-a="closeModal">Cancel</button><button class="btn btn-primary" data-a="gEvSubmit" ${f.sending ? 'disabled aria-busy="true"' : ''}>${f.sending ? 'Saving…' : editing ? 'Save changes' : 'Create event'}</button></div>`;
+}

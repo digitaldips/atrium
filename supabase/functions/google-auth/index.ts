@@ -1,13 +1,18 @@
 // =====================================================================
-// google-auth — Google OAuth for Atrium (READ-ONLY Gmail + Calendar)
+// google-auth — Google OAuth for Atrium (FULL Gmail + Calendar access)
 //   GET  /functions/v1/google-auth/authorize  → 302 to accounts.google.com
 //        (Accept: application/json → 200 { url } so a CORS fetch can
 //         collect the URL instead of being eaten by a cross-origin 302)
 //   GET  /functions/v1/google-auth/callback   → verify the per-flow state,
 //        consume the pending nonce, exchange the code, store the refresh
 //        token (service role), 302 back to the app
-//   GET  /functions/v1/google-auth/status     → { connected, email }
+//   GET  /functions/v1/google-auth/status     → { connected, email, scopes }
 //   POST /functions/v1/google-auth/disconnect → delete the row
+// Requested scopes: gmail.modify + gmail.send + calendar.readonly +
+// calendar.events (GOOGLE_SCOPES in _shared/google-pure.js). A user
+// connected under the earlier read-only scopes upgrades by clicking
+// Connect again — prompt=consent then returns a fresh refresh token
+// covering the new grants; no schema change.
 // Every route (except OPTIONS + callback) validates the caller's Supabase
 // JWT — the gateway adds no auth on /functions/v1/*.
 // OAuth state is per-flow: authorize mints a fresh nonce, stores it with a
@@ -159,7 +164,11 @@ Deno.serve(async (req: Request) => {
         if (!user) return unauthorized(req);
         const row = await getIntegration(user.id);
         const connected = !!(row && row.google_refresh_token);
-        return json(req, { connected, email: connected ? row?.google_email || null : null });
+        /* The scopes Google granted at connect time (space-joined in the
+           row). The Settings surface shows them so a pre-full-access
+           connection is visible and the re-consent hint can fire. */
+        const scopes = typeof row?.scopes === 'string' ? row.scopes.split(' ').filter(Boolean) : Array.isArray(row?.scopes) ? (row.scopes as string[]) : [];
+        return json(req, { connected, email: connected ? row?.google_email || null : null, scopes });
       }
 
       /* ---------- disconnect: delete the stored token ---------- */

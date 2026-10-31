@@ -5,16 +5,26 @@
      - the Vite frontend (src/core/google.js, src/views/calendar.js),
      - node --test (test/google-data.test.js).
    Nothing here may touch network, filesystem or runtime globals beyond
-   the Web-standard TextEncoder/btoa/crypto.subtle trio, which exists in
-   Deno, Node 18+ and browsers alike.
+   the Web-standard TextEncoder/TextDecoder/btoa/atob/crypto.subtle set,
+   which exists in Deno, Node 18+ and browsers alike.
    ===================================================================== */
 
-/* ---------- scopes (READ-ONLY, by design) ---------- */
+/* ---------- scopes (FULL access, Operance google-api parity) ---------- */
 
-/* Atrium can READ Gmail and Google Calendar — never send, never create,
-   never modify. The scopes constant is the single point of truth for the
-   authorize URL and the scopes column stored with the token. */
-export const GOOGLE_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly'];
+/* Atrium can READ, SEND and ORGANIZE Gmail and manage primary-calendar
+   events — the exact scope set the Operance Workspace's google-api asks
+   for: gmail.modify (labels/archive), gmail.send, calendar.readonly,
+   calendar.events (insert/update/delete). The scopes constant is the
+   single point of truth for the authorize URL and the scopes column
+   stored with the token. Upgrading scopes requires the user to click
+   Connect again: prompt=consent then issues a fresh refresh token
+   covering the new grants (no schema change). */
+export const GOOGLE_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/calendar.events',
+];
 
 /* Google OAuth expects the scope list space-separated in one parameter. */
 export const GOOGLE_SCOPE_PARAM = GOOGLE_SCOPES.join(' ');
@@ -279,4 +289,251 @@ function shiftDate(iso, days) {
 export function expandDayRange(from, to) {
   if (!from || !to) return { from, to };
   return { from: shiftDate(from, -1), to: shiftDate(to, 1) };
+}
+
+/* ---------- external-link allowlist (untrusted hrefs) ---------- */
+
+/* Only these hosts may ever become an <a href> from Google data. The
+   mapping functions run EVERY url through safeLink, so an htmlLink or
+   webLink that arrives crafted (different scheme, lookalike host, user
+   credentials) degrades to '' and the UI renders no link at all. */
+export const SAFE_LINK_HOSTS = ['mail.google.com', 'accounts.google.com', 'calendar.google.com'];
+
+export function safeLink(url, hosts = SAFE_LINK_HOSTS) {
+  if (typeof url !== 'string' || !/^https:\/\//i.test(url)) return '';
+  try {
+    const u = new URL(url);
+    return hosts.includes(u.hostname) && !u.username && !u.password ? url : '';
+  } catch {
+    return '';
+  }
+}
+
+/* ---------- base64url → UTF-8 (Gmail body data, attachment data) ---------- */
+
+export function decodeB64url(s) {
+  if (typeof s !== 'string' || !s) return '';
+  try {
+    let t = s.replace(/-/g, '+').replace(/_/g, '/');
+    while (t.length % 4) t += '=';
+    const bin = atob(t);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+  } catch {
+    return '';
+  }
+}
+
+/* ---------- Gmail format=full body-part preference ---------- */
+
+/* Gmail nests MIME parts (multipart/mixed → alternative → …). The body
+   text is the FIRST text/plain part carrying inline data; text/html is
+   the fallback (flagged so the UI knows to sanitize before rendering).
+   Parts with a filename are attachments — never body text. Never throws:
+   a sparse payload yields { kind: 'text', body: '' }. */
+function collectBody(payload, out) {
+  if (!payload || typeof payload !== 'object') return;
+  const mt = String(payload.mimeType || '');
+  const data = payload.body && typeof payload.body === 'object' ? payload.body.data : null;
+  if (data && typeof data === 'string' && !payload.filename) {
+    if (!out.plain && mt === 'text/plain') out.plain = decodeB64url(data);
+    else if (!out.html && mt === 'text/html') out.html = decodeB64url(data);
+  }
+  if (Array.isArray(payload.parts)) for (const p of payload.parts) collectBody(p, out);
+}
+
+export function parseGmailBody(payload) {
+  const out = { plain: '', html: '' };
+  collectBody(payload, out);
+  if (out.plain) return { kind: 'text', body: out.plain };
+  if (out.html) return { kind: 'html', body: out.html };
+  return { kind: 'text', body: '' };
+}
+
+/* Every attachmentId part, flattened (nested containers included):
+   { filename, mimeType, attachmentId, size } — size is a Number, 0 when
+   missing. Body parts (no attachmentId) are skipped. */
+function collectAttachments(payload, out) {
+  if (!payload || typeof payload !== 'object') return;
+  const body = payload.body;
+  if (body && typeof body === 'object' && body.attachmentId) {
+    out.push({
+      filename: String(payload.filename || ''),
+      mimeType: String(payload.mimeType || ''),
+      attachmentId: String(body.attachmentId),
+      size: Number(body.size) || 0,
+    });
+  }
+  if (Array.isArray(payload.parts)) for (const p of payload.parts) collectAttachments(p, out);
+}
+
+export function parseAttachments(payload) {
+  const out = [];
+  collectAttachments(payload, out);
+  return out;
+}
+
+/* ---------- deep message mapping (format=full) ---------- */
+
+/* Gmail messages.get (format=full) → the object the message view renders:
+   headers for reply threading, the preferred body, the attachment list
+   and a webLink that is safe by construction (host allowlisted, id
+   restricted to Gmail's base64url alphabet). Never throws. */
+export function mapGmailFull(m) {
+  if (!m || typeof m !== 'object') return null;
+  const headers = (m.payload && m.payload.headers) || [];
+  const header = name => {
+    const h = headers.find(x => x && x.name && x.name.toLowerCase() === name);
+    return h ? h.value : '';
+  };
+  const { name, email } = parseFromHeader(header('from'));
+  const date = m.internalDate != null ? Number(m.internalDate) : 0;
+  const id = m.id || '';
+  return {
+    id,
+    threadId: m.threadId || '',
+    from: name || email || '(unknown sender)',
+    email,
+    to: header('to'),
+    cc: header('cc'),
+    replyTo: header('reply-to'),
+    subject: header('subject') || '(no subject)',
+    messageId: header('message-id'),
+    inReplyTo: header('in-reply-to'),
+    references: header('references'),
+    date: Number.isFinite(date) ? date : 0,
+    unread: Array.isArray(m.labelIds) ? m.labelIds.includes('UNREAD') : false,
+    labels: Array.isArray(m.labelIds) ? m.labelIds : [],
+    snippet: m.snippet || '',
+    body: parseGmailBody(m.payload),
+    attachments: parseAttachments(m.payload),
+    webLink: id && /^[A-Za-z0-9_-]+$/.test(id) ? safeLink(`https://mail.google.com/mail/u/0/#inbox/${id}`) : '',
+  };
+}
+
+/* threads.get (format=full) → messages grouped chronologically (oldest →
+   newest, stable on equal timestamps). Junk entries are dropped. */
+export function mapThread(t) {
+  if (!t || typeof t !== 'object') return { id: '', messages: [] };
+  const msgs = (Array.isArray(t.messages) ? t.messages : [])
+    .map(mapGmailFull)
+    .filter(Boolean)
+    .map((m, i) => ({ m, i }))
+    .sort((a, b) => a.m.date - b.m.date || a.i - b.i)
+    .map(x => x.m);
+  return { id: t.id || '', messages: msgs };
+}
+
+/* ---------- RFC 5322 MIME builder (send/reply) ---------- */
+
+/* Header values come from user input (compose form), so CR/LF (and any
+   other control character) is collapsed to a single space BEFORE the
+   value is written — a Subject of "Hi\r\nBcc: attacker@evil" can never
+   smuggle a second header into the raw MIME. Header order is fixed:
+   To, Cc, Subject, In-Reply-To, References, then the MIME headers. */
+function mimeHeader(v) {
+  return (
+    String(v ?? '')
+      // eslint-disable-next-line no-control-regex -- control chars ARE the injection payload
+      .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+      .trim()
+  );
+}
+
+export function buildMime(msg = {}) {
+  const lines = [`To: ${mimeHeader(msg.to)}`];
+  if (msg.cc) lines.push(`Cc: ${mimeHeader(msg.cc)}`);
+  lines.push(`Subject: ${mimeHeader(msg.subject)}`);
+  if (msg.inReplyTo) lines.push(`In-Reply-To: ${mimeHeader(msg.inReplyTo)}`);
+  if (msg.references) lines.push(`References: ${mimeHeader(msg.references)}`);
+  lines.push('MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: 8bit');
+  return b64urlFromBytes(new TextEncoder().encode(lines.join('\r\n') + '\r\n\r\n' + String(msg.body ?? '')));
+}
+
+/* ---------- calendar event resource builder (insert/update) ---------- */
+
+const EVENT_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function eventText(v, max) {
+  return (
+    String(v ?? '')
+      // eslint-disable-next-line no-control-regex -- control chars ARE the injection payload
+      .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+      .trim()
+      .slice(0, max)
+  );
+}
+
+const isoDateRe = /^\d{4}-\d{2}-\d{2}$/;
+const rfc3339Re = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+
+/* User form → Google events resource. Validates shapes strictly (title
+   required, start/end present and of the SAME kind — date-only for
+   all-day, RFC3339 dateTime for timed), normalizes attendees to
+   { email } objects (deduped, ≤50) and caps hostile sizes. Invalid
+   input returns null so the caller answers 400 instead of forwarding a
+   partial resource to Google. */
+export function buildEventResource(input) {
+  if (!input || typeof input !== 'object') return null;
+  const title = eventText(input.title, 500);
+  if (!title) return null;
+  const s = input.start && typeof input.start === 'object' ? input.start : null;
+  if (!s) return null;
+  let start = null;
+  if (typeof s.date === 'string' && isoDateRe.test(s.date)) start = { date: s.date };
+  else if (typeof s.dateTime === 'string' && s.dateTime.length <= 40 && rfc3339Re.test(s.dateTime)) start = { dateTime: s.dateTime };
+  if (!start) return null;
+  const e = input.end && typeof input.end === 'object' ? input.end : null;
+  let end = null;
+  if (e) {
+    if (start.date && typeof e.date === 'string' && isoDateRe.test(e.date)) end = { date: e.date };
+    else if (start.dateTime && typeof e.dateTime === 'string' && e.dateTime.length <= 40 && rfc3339Re.test(e.dateTime)) end = { dateTime: e.dateTime };
+  }
+  if (!end) return null;
+  const res = { summary: title, start, end };
+  const location = eventText(input.location, 500);
+  if (location) res.location = location;
+  const description = eventText(input.description, 8000);
+  if (description) res.description = description;
+  const emails = [];
+  for (const a of Array.isArray(input.attendees) ? input.attendees : []) {
+    const email = eventText(a, 254).toLowerCase();
+    if (EVENT_EMAIL_RE.test(email) && !emails.includes(email)) emails.push(email);
+    if (emails.length >= 50) break;
+  }
+  if (emails.length) res.attendees = emails.map(email => ({ email }));
+  return res;
+}
+
+/* ---------- gmail search query + numeric clamps (untrusted params) ---------- */
+
+/* A search query reaches Google inside our API URL — control characters
+   are collapsed to spaces and the query is clamped to 200 chars before
+   it is forwarded as a q parameter. Non-strings become ''. */
+export function validGmailQuery(q) {
+  if (typeof q !== 'string') return '';
+  const stripped = q.replace(/[\u0000-\u001f\u007f]+/g, ' '); // eslint-disable-line no-control-regex -- control chars ARE the injection payload
+  return stripped.trim().slice(0, 200);
+}
+
+export function clampNum(v, { min, max, fallback }) {
+  if (v == null || v === '') return fallback;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+/* ---------- scope display helper ---------- */
+
+/* Full scope URLs → short names for the Settings surface. Entries that
+   are not under Google's auth prefix are dropped (honest display only
+   ever names grants we asked Google for). Accepts the space-joined
+   string the scopes column stores or an array. */
+export function scopeShortNames(scopes) {
+  const list = Array.isArray(scopes) ? scopes : typeof scopes === 'string' ? scopes.split(' ') : [];
+  return list
+    .filter(Boolean)
+    .map(s => String(s).replace(/^https:\/\/www\.googleapis\.com\/auth\//, ''))
+    .filter(s => s && !s.includes('/'));
 }

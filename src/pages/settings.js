@@ -8,7 +8,7 @@ import { av, pIcon } from '../ui/helpers.js';
 import { permsTable, teamsGrid } from './members.js';
 import { page404 } from './errors.js';
 import { SHORTCUTS } from '../overlays/modals.js';
-import { googleReturnBanner } from '../../supabase/functions/_shared/google-pure.js';
+import { googleReturnBanner, scopeShortNames } from '../../supabase/functions/_shared/google-pure.js';
 import { googleStatus, loadGoogleStatus } from '../core/google.js';
 
 export const SET_NAV = [
@@ -456,17 +456,28 @@ export function googleIntegrationsBody(H) {
           : kind === 'error'
             ? `<div class="alert danger" style="margin-bottom:14px">${ic('triangle-alert', 15)}<div><b>Google wasn't connected.</b><div class="muted" style="margin-top:2px">${esc(googleReturnCopy(ret))}</div></div></div>`
             : '';
+  /* Granted scopes, shown honestly from the fetched status. A connection
+     made before the full-access scopes asks for one more consent: the
+     Connect button mints a fresh refresh token covering the new grants. */
+  const shorts = scopeShortNames(g.scopes);
+  const needsReconsent = g.connected && g.loaded && shorts.length > 0 && !shorts.includes('gmail.modify');
+  const scopesRow = shorts.length
+    ? `<div class="row" style="flex-wrap:wrap;gap:4px;margin-top:8px">${shorts.map(s => `<span class="badge">${esc(s)}</span>`).join('')}</div>`
+    : '';
+  const reconsent =
+    g.connected && needsReconsent
+      ? `<div class="alert info" style="margin-top:12px">${ic('info', 15)}<span><b>One more consent needed.</b> Gmail composing, archiving and calendar editing are new. Click Connect again — Google renews your access for the new scopes.</span></div><div style="margin-top:10px"><button class="btn btn-primary btn-sm" data-a="googleConnect">${ic('mail', 14)}Connect for new scopes</button></div>`
+      : '';
   const row = g.connected
     ? srow(
         `<span class="row" style="gap:10px">${ic('mail', 15)}<b style="font-weight:500">Google</b><span class="badge green">${ic('check', 11)}Connected</span></span>`,
-        g.email
-          ? `Connected as <b>${esc(g.email)}</b>. Atrium reads your Gmail inbox and Calendar events — read-only; it can never send mail or change events.`
-          : 'Atrium reads your Gmail inbox and Calendar events — read-only; it can never send mail or change events.',
+        (g.email ? `Connected as <b>${esc(g.email)}</b>. ` : '') +
+          'Atrium reads your Gmail inbox, sends mail and replies when you ask, organizes messages (read/unread, archive, trash) and manages events on your primary Google Calendar.',
         `<button class="btn btn-danger-ghost btn-sm" data-a="googleDisconnect">Disconnect</button>`,
-      )
+      ) + scopesRow
     : srow(
         `<span class="row" style="gap:10px">${ic('mail', 15)}<b style="font-weight:500">Google</b><span class="badge">${g.loaded === false && g.error ? 'Unavailable' : 'Not connected'}</span></span>`,
-        'Show your Gmail inbox under Inbox → Gmail and your Google Calendar events on the Calendar page. Read-only access only.',
+        'Show your Gmail inbox under Inbox → Gmail and your Google Calendar events on the Calendar page. Compose, reply, archive and event editing need the full-access scopes.',
         g.loaded === false && g.error
           ? `<button class="btn btn-secondary btn-sm" data-a="googleStatusRetry">Retry</button>`
           : g.loaded
@@ -476,8 +487,8 @@ export function googleIntegrationsBody(H) {
   return (
     H('Connect Atrium to the tools you already use.') +
     banner +
-    `<div class="sblock" style="margin-top:0"><h2>Google</h2>${row}</div>
-    <p class="hint" style="margin-top:12px">Atrium requests only <b>gmail.readonly</b> and <b>calendar.events.readonly</b>. Tokens are stored server-side (never in the browser) and can be removed any time with Disconnect.</p>`
+    `<div class="sblock" style="margin-top:0"><h2>Google</h2>${row}${reconsent}</div>
+    <p class="hint" style="margin-top:12px">Atrium requests exactly <b>gmail.modify</b>, <b>gmail.send</b>, <b>calendar.readonly</b> and <b>calendar.events</b> — nothing else. Tokens are stored server-side (never in the browser) and can be removed any time with Disconnect.</p>`
   );
 }
 export function strengthMeter(pw) {

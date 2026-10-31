@@ -27,6 +27,7 @@ const GCAL = '#1A73E8'; // Google blue — marks every Google-calendar surface
 export function calendarHtml(ts, opt = {}) {
   const cur = parse(S.ui.calDate);
   const mode = S.ui.calMode;
+  const g = googleStatus();
   const evs = opt.events ? D().events.filter(e => !opt.project || e.project === opt.project) : [];
   const gevs = opt.google && S.ui.gevState !== 'off' ? S.ui.gevs || [] : [];
   const itemsOn = ds => [
@@ -62,7 +63,7 @@ export function calendarHtml(ts, opt = {}) {
           const ds = iso(d);
           const items = itemsOn(ds);
           const today = diffD(d, TODAY) === 0;
-          return `<div class="cday ${d.getMonth() !== cur.getMonth() ? 'out' : ''} ${today ? 'today' : ''}" data-drop-day="${ds}">
+          return `<div class="cday ${d.getMonth() !== cur.getMonth() ? 'out' : ''} ${today ? 'today' : ''}" data-drop-day="${ds}"${g.connected && opt.google ? ` data-a="gEventNew" data-date="${ds}" role="button" aria-label="New event on ${fmtDate(ds)}"` : ''}>
           <span class="dn" ${today ? 'aria-current="date"' : ''}>${d.getDate()}</span>
           <button class="ibtn ibtn-xs add" data-a="newTask" data-due="${ds}" ${opt.project ? `data-project="${opt.project}"` : ''} aria-label="Add task on ${fmtDate(ds)}">${ic('plus', 13)}</button>
           ${items.slice(0, 3).map(chip).join('')}
@@ -80,7 +81,7 @@ export function calendarHtml(ts, opt = {}) {
         const items = itemsOn(ds).sort((a, b) => (a.ev ? 0 : 1) - (b.ev ? 0 : 1));
         const today = diffD(d, TODAY) === 0;
         return `<div class="wcol"><div class="wcol-h ${today ? 'today' : ''}"><span class="n">${d.getDate()}</span><span class="muted" style="font-size:12px">${WD[d.getDay()]}</span><span class="sp"></span><button class="ibtn ibtn-xs" data-a="newTask" data-due="${ds}" ${opt.project ? `data-project="${opt.project}"` : ''} aria-label="Add task">${ic('plus', 13)}</button></div>
-        <div class="wcol-b" data-drop-day="${ds}">${
+        <div class="wcol-b" data-drop-day="${ds}"${g.connected && opt.google ? ` data-a="gEventNew" data-date="${ds}" role="button" aria-label="New event on ${fmtDate(ds)}"` : ''}>${
           items
             .map(it => {
               if (it.g) {

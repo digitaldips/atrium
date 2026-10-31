@@ -9,6 +9,17 @@ import assert from 'node:assert/strict';
 import {
   GOOGLE_SCOPES,
   GOOGLE_SCOPE_PARAM,
+  scopeShortNames,
+  safeLink,
+  decodeB64url,
+  buildMime,
+  parseGmailBody,
+  parseAttachments,
+  mapGmailFull,
+  mapThread,
+  buildEventResource,
+  validGmailQuery,
+  clampNum,
   safeEqual,
   signState,
   verifyState,
@@ -27,16 +38,37 @@ import {
   expandDayRange,
 } from '../supabase/functions/_shared/google-pure.js';
 
-/* ---------- scopes constant ---------- */
+/* ---------- scopes constant (Operance parity: FULL access) ---------- */
 
-test('GOOGLE_SCOPES is exactly the two read-only scopes', () => {
-  assert.deepEqual(GOOGLE_SCOPES, ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly']);
+test('GOOGLE_SCOPES is exactly the four full-access scopes', () => {
+  assert.deepEqual(GOOGLE_SCOPES, [
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/calendar.readonly',
+    'https://www.googleapis.com/auth/calendar.events',
+  ]);
 });
 
 test('GOOGLE_SCOPE_PARAM joins the scopes with spaces (Google OAuth wire format)', () => {
   assert.equal(GOOGLE_SCOPE_PARAM, GOOGLE_SCOPES.join(' '));
-  assert.equal(GOOGLE_SCOPES.length, 2, 'no write scope may ever creep in');
-  for (const s of GOOGLE_SCOPES) assert.match(s, /\.readonly$/, `scope ${s} must be read-only`);
+  assert.equal(GOOGLE_SCOPES.length, 4, 'exactly the Operance-parity scope set');
+  assert.ok(GOOGLE_SCOPES.includes('https://www.googleapis.com/auth/gmail.send'), 'sending mail requires gmail.send');
+  assert.ok(GOOGLE_SCOPES.includes('https://www.googleapis.com/auth/gmail.modify'), 'label changes require gmail.modify');
+  assert.ok(GOOGLE_SCOPES.includes('https://www.googleapis.com/auth/calendar.events'), 'event CRUD requires calendar.events');
+});
+
+test('scopeShortNames strips the auth prefix and drops foreign entries', () => {
+  assert.deepEqual(scopeShortNames(['https://www.googleapis.com/auth/gmail.modify', 'https://www.googleapis.com/auth/calendar.events']), [
+    'gmail.modify',
+    'calendar.events',
+  ]);
+  assert.deepEqual(
+    scopeShortNames('https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.readonly'),
+    ['gmail.send', 'calendar.readonly'],
+    'space-joined string (stored scopes column) is accepted',
+  );
+  assert.deepEqual(scopeShortNames(['https://evil.example/x']), [], 'non-googleapis entries are dropped');
+  assert.deepEqual(scopeShortNames(null), []);
 });
 
 /* ---------- state HMAC sign/verify (per-flow nonce, F2) ---------- */
@@ -375,4 +407,335 @@ test('expandDayRange pads both ends by one day so UTC timeMin/timeMax cover ever
 test('expandDayRange passes malformed input through instead of throwing', () => {
   assert.deepEqual(expandDayRange('', ''), { from: '', to: '' });
   assert.deepEqual(expandDayRange(null, '2026-11-01'), { from: null, to: '2026-11-01' });
+});
+
+/* ---------- external-link allowlist (untrusted hrefs) ---------- */
+
+test('safeLink allows only https on the Google mail/accounts/calendar hosts', () => {
+  assert.equal(safeLink('https://mail.google.com/mail/u/0/#inbox/abc'), 'https://mail.google.com/mail/u/0/#inbox/abc');
+  assert.equal(safeLink('https://accounts.google.com/calendar/event?x=1'), 'https://accounts.google.com/calendar/event?x=1');
+  assert.equal(safeLink('https://calendar.google.com/calendar/event?eid=zz'), 'https://calendar.google.com/calendar/event?eid=zz');
+  assert.equal(safeLink('http://mail.google.com/mail/u/0/#inbox/abc'), '', 'plain http is never a safe link');
+  assert.equal(safeLink('https://evil.example/mail.google.com'), '', 'lookalike hosts are rejected');
+  assert.equal(safeLink('https://mail.google.com.evil.example/x'), '', 'suffix spoofing is rejected');
+  assert.equal(safeLink('javascript:alert(1)'), '', 'javascript: is never a safe link');
+  assert.equal(safeLink('https://user:pw@mail.google.com/x'), '', 'credentials in the URL are rejected');
+  assert.equal(safeLink(''), '');
+  assert.equal(safeLink(null), '');
+});
+
+/* ---------- base64url decode (Gmail body data) ---------- */
+
+test('decodeB64url decodes Gmail base64url body data to UTF-8', () => {
+  // 'Hello' → base64url via b64urlFromBytes semantics
+  assert.equal(decodeB64url('SGVsbG8='), 'Hello');
+  assert.equal(decodeB64url('SGVsbG8'), 'Hello', 'missing padding is tolerated');
+  const enc = new TextEncoder().encode('héllo ✓');
+  let bin = '';
+  for (const b of enc) bin += String.fromCharCode(b);
+  const b64 = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  assert.equal(decodeB64url(b64), 'héllo ✓', 'multi-byte UTF-8 survives base64url');
+  assert.equal(decodeB64url('!!!not-base64!!!'), '', 'garbage decodes to empty string, never throws');
+  assert.equal(decodeB64url(''), '');
+  assert.equal(decodeB64url(null), '');
+});
+
+/* ---------- MIME message builder (RFC 5322, header-injection safe) ---------- */
+
+test('buildMime encodes RFC 5322 headers + body as base64url with the fixed header order', () => {
+  const raw = decodeB64url(buildMime({ to: 'wes@example.com', cc: 'ops@example.com', subject: 'Lunch?', body: 'How about 12:00?' }));
+  const lines = raw.split('\r\n');
+  assert.deepEqual(
+    lines,
+    [
+      'To: wes@example.com',
+      'Cc: ops@example.com',
+      'Subject: Lunch?',
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: 8bit',
+      '',
+      'How about 12:00?',
+    ],
+    'To, Cc, Subject, then MIME headers, blank line, body',
+  );
+});
+
+test('buildMime adds In-Reply-To/References between Subject and MIME-Version for replies', () => {
+  const raw = decodeB64url(
+    buildMime({
+      to: 'a@b.c',
+      subject: 'Re: Hello',
+      body: 'hi',
+      inReplyTo: '<msg-1@mail.gmail.com>',
+      references: '<msg-0@mail.gmail.com> <msg-1@mail.gmail.com>',
+    }),
+  );
+  const lines = raw.split('\r\n');
+  assert.equal(lines[0], 'To: a@b.c');
+  assert.equal(lines[1], 'Subject: Re: Hello');
+  assert.equal(lines[2], 'In-Reply-To: <msg-1@mail.gmail.com>');
+  assert.equal(lines[3], 'References: <msg-0@mail.gmail.com> <msg-1@mail.gmail.com>');
+  assert.equal(lines[4], 'MIME-Version: 1.0');
+});
+
+test('buildMime strips CR/LF from every header value (header injection is impossible)', () => {
+  const raw = decodeB64url(
+    buildMime({
+      to: 'wes@example.com\r\nBcc: attacker@evil.example',
+      cc: 'ops@example.com\nX-Smuggled: 1',
+      subject: 'Hi\r\nX-Injected: yes',
+      inReplyTo: '<m@x>\r\nBcc: more@evil.example',
+      references: '<r@x>\nBcc: again@evil.example',
+      body: 'body',
+    }),
+  );
+  const lines = raw.split('\r\n\r\n')[0].split('\r\n');
+  assert.equal(lines.length, 8, 'To/Cc/Subject/In-Reply-To/References + MIME-Version/Content-Type/Content-Transfer-Encoding — nothing else');
+  assert.doesNotMatch(raw.split('\r\n\r\n')[0], /^Bcc:/im, 'no line begins with a smuggled Bcc header');
+  assert.doesNotMatch(raw.split('\r\n\r\n')[0], /^X-Smuggled:/im);
+  assert.doesNotMatch(raw.split('\r\n\r\n')[0], /^X-Injected:/im);
+  assert.equal(lines[0], 'To: wes@example.com Bcc: attacker@evil.example', 'CRLF collapses to a space inside the value');
+  assert.equal(lines[2], 'Subject: Hi X-Injected: yes');
+});
+
+test('buildMime tolerates missing fields and encodes the body byte-exactly', () => {
+  const raw = decodeB64url(buildMime({ to: 'a@b.c', subject: 's', body: 'line1\r\nline2' }));
+  assert.equal(raw.split('\r\n\r\n')[1], 'line1\r\nline2', 'body keeps its own CRLFs');
+  const minimal = decodeB64url(buildMime({ to: 'a@b.c' }));
+  assert.match(minimal, /^To: a@b\.c\r\nSubject: \r\nMIME-Version: 1\.0/m, 'missing subject/body default to empty');
+});
+
+/* ---------- body-part preference parser (format=full payload) ---------- */
+
+const FULL_PART = (mimeType, data, extra = {}) => ({ mimeType, body: { data, size: 10 }, ...extra });
+
+test('parseGmailBody prefers the text/plain part over text/html', () => {
+  const payload = {
+    mimeType: 'multipart/alternative',
+    parts: [FULL_PART('text/html', 'aHRtbCE='), FULL_PART('text/plain', 'cGxhaW4h')],
+  };
+  assert.deepEqual(parseGmailBody(payload), { kind: 'text', body: 'plain!' });
+});
+
+test('parseGmailBody falls back to the html part and flags it', () => {
+  const payload = { mimeType: 'multipart/alternative', parts: [FULL_PART('text/html', 'PGI+aGk8L2I+')] };
+  assert.deepEqual(parseGmailBody(payload), { kind: 'html', body: '<b>hi</b>' });
+});
+
+test('parseGmailBody reads a single-part message body', () => {
+  assert.deepEqual(parseGmailBody({ mimeType: 'text/plain', body: { data: 'dG9wIGxldmVs' } }), { kind: 'text', body: 'top level' });
+  assert.deepEqual(parseGmailBody({ mimeType: 'text/html', body: { data: 'PGk+aGk8L2k+' } }), { kind: 'html', body: '<i>hi</i>' });
+});
+
+test('parseGmailBody walks nested multipart containers and skips attachment parts', () => {
+  const payload = {
+    mimeType: 'multipart/mixed',
+    parts: [
+      {
+        mimeType: 'multipart/alternative',
+        parts: [
+          { mimeType: 'text/plain', body: { data: 'bmVzdGVk' } },
+          { mimeType: 'text/html', body: { data: 'PG5lc3RlZD4=' } },
+        ],
+      },
+      { mimeType: 'application/pdf', filename: 'report.pdf', body: { attachmentId: 'att-1', size: 4242 } },
+    ],
+  };
+  assert.deepEqual(parseGmailBody(payload), { kind: 'text', body: 'nested' }, 'the pdf part is not body text');
+});
+
+test('parseGmailBody returns an empty text body for sparse payloads instead of throwing', () => {
+  assert.deepEqual(parseGmailBody({}), { kind: 'text', body: '' });
+  assert.deepEqual(parseGmailBody(null), { kind: 'text', body: '' });
+  assert.deepEqual(parseGmailBody({ mimeType: 'multipart/mixed', parts: [{ filename: 'x.pdf', body: { attachmentId: 'a' } }] }), { kind: 'text', body: '' });
+});
+
+/* ---------- attachment listing ---------- */
+
+test('parseAttachments lists every attachmentId part with filename, type and size', () => {
+  const payload = {
+    mimeType: 'multipart/mixed',
+    parts: [
+      FULL_PART('text/plain', 'aGk='),
+      { mimeType: 'application/pdf', filename: 'report.pdf', body: { attachmentId: 'att-1', size: '4242' } },
+      {
+        mimeType: 'multipart/related',
+        parts: [{ mimeType: 'image/png', filename: 'pic.png', body: { attachmentId: 'att-2', size: 99 } }],
+      },
+    ],
+  };
+  assert.deepEqual(
+    parseAttachments(payload),
+    [
+      { filename: 'report.pdf', mimeType: 'application/pdf', attachmentId: 'att-1', size: 4242 },
+      { filename: 'pic.png', mimeType: 'image/png', attachmentId: 'att-2', size: 99 },
+    ],
+    'sizes are numbers and nested parts are found',
+  );
+});
+
+test('parseAttachments ignores body parts and tolerates sparse input', () => {
+  assert.deepEqual(parseAttachments(FULL_PART('text/plain', 'aGk=')), [], 'inline body parts are not attachments');
+  assert.deepEqual(parseAttachments(null), []);
+  assert.deepEqual(parseAttachments({ parts: [null, { filename: 'x', body: {} }] }), [], 'parts without an attachmentId are skipped');
+});
+
+/* ---------- deep message mapping (format=full → UI shape) ---------- */
+
+test('mapGmailFull maps headers, body, attachments and a safe webLink', () => {
+  const m = {
+    id: 'msg-9',
+    threadId: 'th-1',
+    snippet: 'snip',
+    internalDate: '1761907200000',
+    labelIds: ['INBOX', 'UNREAD'],
+    payload: {
+      headers: [
+        { name: 'From', value: 'Wes <wes@x.io>' },
+        { name: 'To', value: 'me@atrium.app' },
+        { name: 'Cc', value: 'ops@atrium.app' },
+        { name: 'Subject', value: 'Report' },
+        { name: 'Message-ID', value: '<m1@x.io>' },
+        { name: 'In-Reply-To', value: '<m0@x.io>' },
+        { name: 'References', value: '<m0@x.io>' },
+        { name: 'Reply-To', value: 'noreply@x.io' },
+      ],
+      mimeType: 'multipart/mixed',
+      parts: [FULL_PART('text/plain', 'Ym9keSE='), { mimeType: 'application/pdf', filename: 'r.pdf', body: { attachmentId: 'a1', size: 12 } }],
+    },
+  };
+  const got = mapGmailFull(m);
+  assert.equal(got.id, 'msg-9');
+  assert.equal(got.threadId, 'th-1');
+  assert.equal(got.from, 'Wes');
+  assert.equal(got.email, 'wes@x.io');
+  assert.equal(got.to, 'me@atrium.app');
+  assert.equal(got.cc, 'ops@atrium.app');
+  assert.equal(got.replyTo, 'noreply@x.io');
+  assert.equal(got.subject, 'Report');
+  assert.equal(got.messageId, '<m1@x.io>');
+  assert.equal(got.inReplyTo, '<m0@x.io>');
+  assert.equal(got.references, '<m0@x.io>');
+  assert.equal(got.date, 1761907200000);
+  assert.equal(got.unread, true);
+  assert.deepEqual(got.body, { kind: 'text', body: 'body!' });
+  assert.deepEqual(got.attachments, [{ filename: 'r.pdf', mimeType: 'application/pdf', attachmentId: 'a1', size: 12 }]);
+  assert.equal(got.webLink, 'https://mail.google.com/mail/u/0/#inbox/msg-9');
+});
+
+test('mapGmailFull is null-safe and builds a safe webLink only for clean ids', () => {
+  assert.equal(mapGmailFull(null), null);
+  const evil = mapGmailFull({ id: 'x/y?z', payload: { headers: [] } });
+  assert.equal(evil.webLink, '', 'ids with path/query characters never become links');
+});
+
+/* ---------- thread grouping (oldest → newest) ---------- */
+
+test('mapThread groups messages chronologically regardless of payload order', () => {
+  const mk = (id, at) => ({ id, internalDate: String(at), payload: { headers: [{ name: 'Subject', value: id }] } });
+  const t = mapThread({ id: 'th-9', messages: [mk('third', 3000), mk('first', 1000), mk('second', 2000)] });
+  assert.equal(t.id, 'th-9');
+  assert.deepEqual(
+    t.messages.map(m => m.subject),
+    ['first', 'second', 'third'],
+    'replies read oldest → newest',
+  );
+});
+
+test('mapThread keeps insertion order for equal timestamps and handles sparse input', () => {
+  const mk = (id, at) => ({ id, internalDate: String(at), payload: { headers: [] } });
+  const t = mapThread({ id: 'x', messages: [mk('a', 5), mk('b', 5)] });
+  assert.deepEqual(
+    t.messages.map(m => m.id),
+    ['a', 'b'],
+    'stable sort on ties',
+  );
+  assert.deepEqual(mapThread(null), { id: '', messages: [] });
+  assert.deepEqual(mapThread({ id: 'x' }), { id: 'x', messages: [] });
+  assert.deepEqual(mapThread({ id: 'x', messages: [null, 42] }).messages, [], 'junk entries are dropped');
+});
+
+/* ---------- calendar event payload builder (create/update) ---------- */
+
+test('buildEventResource builds a timed event with attendees, location and description', () => {
+  const res = buildEventResource({
+    title: 'Design review',
+    start: { dateTime: '2026-11-05T09:30:00+01:00' },
+    end: { dateTime: '2026-11-05T10:30:00+01:00' },
+    location: 'Room 2',
+    description: 'Bring the wireframes',
+    attendees: ['Wes@Example.com', 'ops@example.com', 'Wes@example.com', 'not-an-email', ''],
+  });
+  assert.deepEqual(
+    res,
+    {
+      summary: 'Design review',
+      start: { dateTime: '2026-11-05T09:30:00+01:00' },
+      end: { dateTime: '2026-11-05T10:30:00+01:00' },
+      location: 'Room 2',
+      description: 'Bring the wireframes',
+      attendees: [{ email: 'wes@example.com' }, { email: 'ops@example.com' }],
+    },
+    'attendees are normalized, deduped and validated',
+  );
+});
+
+test('buildEventResource builds an all-day event with date-only start/end', () => {
+  const res = buildEventResource({ title: 'Offsite', start: { date: '2026-11-05' }, end: { date: '2026-11-06' } });
+  assert.deepEqual(res.start, { date: '2026-11-05' });
+  assert.deepEqual(res.end, { date: '2026-11-06' });
+  assert.equal(res.attendees, undefined, 'no attendees key when the list is empty');
+});
+
+test('buildEventResource rejects invalid payloads with null (never a partial resource)', () => {
+  assert.equal(buildEventResource(null), null);
+  assert.equal(buildEventResource({}), null, 'missing title');
+  assert.equal(buildEventResource({ title: 'x' }), null, 'missing start');
+  assert.equal(buildEventResource({ title: 'x', start: { date: '05/11/2026' }, end: { date: '2026-11-06' } }), null, 'malformed date');
+  assert.equal(
+    buildEventResource({ title: 'x', start: { dateTime: '2026-11-05 09:30' }, end: { dateTime: '2026-11-05T10:30:00Z' } }),
+    null,
+    'malformed dateTime',
+  );
+  assert.equal(
+    buildEventResource({ title: 'x', start: { date: '2026-11-05' }, end: { dateTime: '2026-11-05T10:30:00Z' } }),
+    null,
+    'all-day start with timed end is rejected',
+  );
+  assert.equal(buildEventResource({ title: 'x', start: { dateTime: '2026-11-05T09:30:00Z' }, end: {} }), null, 'missing end');
+});
+
+test('buildEventResource caps hostile field sizes and strips control characters', () => {
+  const res = buildEventResource({
+    title: 'T\r\n<script>'.padEnd(600, 'x'),
+    start: { date: '2026-11-05' },
+    end: { date: '2026-11-06' },
+    description: 'd'.padEnd(9000, 'd'),
+    attendees: Array.from({ length: 80 }, (_, i) => `p${i}@x.io`),
+  });
+  assert.equal(res.summary.length, 500, 'title is capped');
+  assert.doesNotMatch(res.summary, /[\r\n]/);
+  assert.equal(res.description.length, 8000, 'description is capped');
+  assert.equal(res.attendees.length, 50, 'attendees are capped at 50');
+});
+
+/* ---------- gmail search query + numeric clamps ---------- */
+
+test('validGmailQuery strips control characters and clamps the length', () => {
+  assert.equal(validGmailQuery('from:wes subject:report'), 'from:wes subject:report');
+  assert.equal(validGmailQuery('  padded  '), 'padded');
+  assert.equal(validGmailQuery('a\r\nb'), 'a b', 'CRLF never reaches the Google URL');
+  assert.equal(validGmailQuery('x'.repeat(500)).length, 200, 'query is clamped to 200 chars');
+  assert.equal(validGmailQuery(42), '');
+  assert.equal(validGmailQuery(null), '');
+});
+
+test('clampNum clamps to the range with an honest fallback', () => {
+  assert.equal(clampNum('25', { min: 1, max: 50, fallback: 20 }), 25);
+  assert.equal(clampNum('500', { min: 1, max: 50, fallback: 20 }), 50);
+  assert.equal(clampNum('0', { min: 1, max: 50, fallback: 20 }), 1);
+  assert.equal(clampNum('abc', { min: 1, max: 50, fallback: 20 }), 20);
+  assert.equal(clampNum('', { min: 1, max: 50, fallback: 20 }), 20);
+  assert.equal(clampNum('7.9', { min: 1, max: 50, fallback: 20 }), 8, 'rounds to an integer');
 });

@@ -35,11 +35,13 @@ export function unauthorized(req: Request): Response {
   return json(req, { error: 'unauthorized', message: 'A valid signed-in user token is required.' }, 401);
 }
 
-/* Route segment after the mount prefix: /google-auth/status → 'status'.
-   Also tolerate a runtime that strips the function name (/status). */
+/* Route segments after the mount prefix: /google-data/gmail → 'gmail',
+   /google-data/gmail/message → 'gmail/message'. Also tolerate a runtime
+   that strips the function name (/status → 'status'). Sub-routes join
+   with '/', so a handler can switch on the full sub-path. */
 export function action(req: Request, name: string): string {
   const seg = new URL(req.url).pathname.split('/').filter(Boolean);
-  return seg[0] === name ? seg[1] || '' : seg[0] || '';
+  return seg[0] === name ? seg.slice(1).join('/') || '' : seg.join('/');
 }
 
 /* Validate the caller's Supabase JWT by asking GoTrue to resolve it to a
