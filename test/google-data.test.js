@@ -19,6 +19,7 @@ import {
   googleReturnBanner,
   parseFromHeader,
   mapGmailMessage,
+  mergeInbox,
   eventDateKey,
   eventTimeLabel,
   eventTimeRange,
@@ -211,6 +212,112 @@ test('mapGmailMessage header lookup is case-insensitive and null-safe', () => {
   assert.equal(m.from, 'bare@x.io', 'a bare address is shown as the sender');
   assert.equal(m.email, 'bare@x.io');
   assert.equal(mapGmailMessage(null), null, 'null in, null out');
+});
+
+/* ---------- inbox merge (workspace notifs + gmail, ONE sorted list) ---------- */
+
+const N = (id, at, type = 'mention', read = false) => ({ id, at, type, read, text: `n-${id}` });
+const G = (id, date, unread = true) => ({ id, date, unread, from: `g-${id}`, subject: `s-${id}`, snippet: '', webLink: '' });
+
+test('mergeInbox tags each row with its kind and returns the original items', () => {
+  const notif = N('n1', 100);
+  const msg = G('g1', 200);
+  assert.deepEqual(mergeInbox([notif], [msg]), [
+    { kind: 'gmail', at: 200, item: msg },
+    { kind: 'notif', at: 100, item: notif },
+  ]);
+});
+
+test('mergeInbox sorts one unified list by time, newest first, across kinds', () => {
+  const merged = mergeInbox([N('old', 1000), N('new', 9000), N('mid', 4000)], [G('newest', 9500), G('oldest', 500), G('midg', 4500)]);
+  assert.deepEqual(
+    merged.map(r => r.item.id),
+    ['newest', 'new', 'midg', 'mid', 'old', 'oldest'],
+    'gmail and notif rows interleave by epoch ms, newest first',
+  );
+});
+
+test('mergeInbox cat gating: "all" merges, notif cats filter their kind only, "gmail" shows only mail', () => {
+  const notifs = [N('m', 1, 'mention'), N('a', 2, 'assign'), N('c', 3, 'comment'), N('u', 4, 'update')];
+  const gmsgs = [G('g', 5)];
+  assert.equal(mergeInbox(notifs, gmsgs, { cat: 'all' }).length, 5, '"all" merges both kinds');
+  assert.deepEqual(
+    mergeInbox(notifs, gmsgs, { cat: 'mention' }).map(r => r.item.id),
+    ['m'],
+    'mention shows only mention notifs — no mail',
+  );
+  assert.deepEqual(
+    mergeInbox(notifs, gmsgs, { cat: 'assign' }).map(r => r.item.id),
+    ['a'],
+  );
+  assert.deepEqual(
+    mergeInbox(notifs, gmsgs, { cat: 'comment' }).map(r => r.item.id),
+    ['c'],
+  );
+  assert.deepEqual(
+    mergeInbox(notifs, gmsgs, { cat: 'update' }).map(r => r.item.id),
+    ['u'],
+  );
+  const gm = mergeInbox(notifs, gmsgs, { cat: 'gmail' });
+  assert.deepEqual(
+    gm.map(r => r.item.id),
+    ['g'],
+    '"gmail" shows only gmail rows',
+  );
+  assert.equal(
+    gm.every(r => r.kind === 'gmail'),
+    true,
+    'a workspace notif can never leak into the gmail category',
+  );
+});
+
+test('mergeInbox unreadOnly applies to BOTH kinds', () => {
+  const notifs = [N('nunread', 1, 'mention', false), N('nread', 2, 'mention', true)];
+  const gmsgs = [G('gunread', 3, true), G('gread', 4, false)];
+  const filtered = mergeInbox(notifs, gmsgs, { cat: 'all', unreadOnly: true });
+  assert.deepEqual(
+    filtered.map(r => `${r.kind}:${r.item.id}`),
+    ['gmail:gunread', 'notif:nunread'],
+    'read notifs AND read mail are filtered out together',
+  );
+  assert.equal(mergeInbox(notifs, gmsgs, { cat: 'all', unreadOnly: false }).length, 4, 'toggle off keeps everything');
+  assert.deepEqual(
+    mergeInbox(notifs, gmsgs, { cat: 'gmail', unreadOnly: true }).map(r => r.item.id),
+    ['gunread'],
+  );
+  assert.deepEqual(
+    mergeInbox(notifs, gmsgs, { cat: 'mention', unreadOnly: true }).map(r => r.item.id),
+    ['nunread'],
+  );
+});
+
+test('mergeInbox handles empty and missing inputs without throwing', () => {
+  assert.deepEqual(mergeInbox([], []), []);
+  assert.deepEqual(mergeInbox(null, undefined), [], 'null inputs behave like empty lists');
+  assert.deepEqual(
+    mergeInbox([N('n1', 10)], [], { cat: 'all' }).map(r => r.item.id),
+    ['n1'],
+  );
+  assert.deepEqual(
+    mergeInbox([], [G('g1', 10)], { cat: 'all' }).map(r => r.item.id),
+    ['g1'],
+  );
+  assert.deepEqual(mergeInbox([], [G('g1', 10)], { cat: 'mention' }), [], 'no notifs → empty notif-category view');
+  assert.deepEqual(mergeInbox([N('n1', 10)], [], { cat: 'gmail' }), [], 'no mail → empty gmail view');
+});
+
+test('mergeInbox defaults to the merged "all" view with the unread toggle off', () => {
+  assert.equal(mergeInbox([N('n1', 1)], [G('g1', 2)]).length, 2);
+  assert.equal(mergeInbox([N('n1', 1)], [G('g1', 2)], {}).length, 2, 'empty options object');
+  assert.equal(mergeInbox([N('n1', 1, 'mention', true)], [G('g1', 2, false)]).length, 2, 'read items kept without unreadOnly');
+});
+
+test('mergeInbox never produces NaN ordering: missing timestamps sort as 0 instead of poisoning the sort', () => {
+  const merged = mergeInbox([N('n1', undefined), N('n2', 5000)], [G('g1', null)]);
+  assert.deepEqual(
+    merged.map(r => r.item.id),
+    ['n2', 'n1', 'g1'],
+  );
 });
 
 /* ---------- calendar event bucketing ---------- */

@@ -29,10 +29,13 @@ A.googleStatusRetry = async () => {
   await loadGoogleStatus();
 };
 
-/* inbox: pick / deselect a gmail message (preview pane) */
+/* inbox: pick / deselect a gmail message (preview pane). Selecting either
+   kind of row owns the preview: a gmail pick clears a notif selection so
+   the merged 'all' view can never show a stale notif preview. */
 A.gsel = el => {
   const id = el.dataset.id || '';
   S.ui.gsel = id || null;
+  S.ui.inboxSel = null;
   render();
 };
 

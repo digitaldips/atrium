@@ -168,6 +168,49 @@ export function mapGmailMessage(m) {
   };
 }
 
+/* ---------- inbox merge (workspace notifs + gmail, ONE sorted list) ---------- */
+
+/* Unify workspace notifications and mapped Gmail messages into the single
+   newest-first list the Inbox 'All' view renders. Rows are kind-tagged:
+     { kind: 'notif', at: <epoch ms>, item: <the original notif> }
+     { kind: 'gmail', at: <epoch ms>, item: <the mapped gmail message> }
+   Options:
+     cat        'all' merges both kinds; 'mention' | 'assign' | 'comment' |
+                'update' show notifs of that type only; 'gmail' shows mail
+                only — a workspace notif can never leak into the gmail view.
+                Unknown cats fall back to the merged 'all' semantics.
+     unreadOnly filters read notifs AND read mail together (the Inbox's
+                'Unread only' toggle applies across both kinds).
+   Missing/unparseable timestamps sort as 0 (never NaN) so one malformed
+   row cannot poison the ordering; equal times keep insertion order
+   (stable sort). Pure: no DOM, no store, no clock, no throwing. */
+export function mergeInbox(notifs, gmsgs, { cat = 'all', unreadOnly = false } = {}) {
+  const NOTIF_CATS = ['mention', 'assign', 'comment', 'update'];
+  const timeOf = v => {
+    const t = Number(v);
+    return Number.isFinite(t) ? t : 0;
+  };
+  const list = v => (Array.isArray(v) ? v : []);
+  const rows = [];
+  if (cat === 'all' || NOTIF_CATS.includes(cat)) {
+    for (const n of list(notifs)) {
+      if (!n) continue;
+      if (cat !== 'all' && n.type !== cat) continue;
+      if (unreadOnly && n.read) continue;
+      rows.push({ kind: 'notif', at: timeOf(n.at), item: n });
+    }
+  }
+  if (cat === 'all' || cat === 'gmail') {
+    for (const m of list(gmsgs)) {
+      if (!m) continue;
+      if (unreadOnly && !m.unread) continue;
+      rows.push({ kind: 'gmail', at: timeOf(m.date), item: m });
+    }
+  }
+  rows.sort((a, b) => b.at - a.at);
+  return rows;
+}
+
 /* ---------- Google Calendar event helpers ---------- */
 
 /* The day an event sits on in the month grid. All-day events carry a plain

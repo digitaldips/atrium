@@ -1681,6 +1681,7 @@ A.selNotif = el => {
   const n = D().notifs.find(x => x.id === el.dataset.id);
   n.read = true;
   S.ui.inboxSel = n.id;
+  S.ui.gsel = null; // one selection at a time across the merged inbox
   save();
   render();
 };
