@@ -48,9 +48,11 @@ function consentUrl(userId: string, state: string): string {
 }
 
 function backToApp(result: string, reason = ''): string {
-  const u = new URL(`${APP_ORIGIN}/#settings?google=${encodeURIComponent(result)}`);
-  if (reason) u.searchParams.set('reason', reason);
-  return u.toString();
+  /* The app reads its route + params from the URL hash (#settings?google=…),
+     so the query must live INSIDE the hash — URL.searchParams would put it
+     in the search string where the app never looks. */
+  const q = reason ? `&reason=${encodeURIComponent(reason)}` : '';
+  return `${APP_ORIGIN}/#settings?google=${encodeURIComponent(result)}${q}`;
 }
 
 function seeOther(req: Request, location: string): Response {
