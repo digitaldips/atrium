@@ -23,7 +23,7 @@ import {
   tasksOf,
   visibleProjects,
 } from '../core/store.js';
-import { makeLinkRow, upsertLink } from '../core/links.js';
+import { makeLinkRow, upsertLink, descToText } from '../core/links.js';
 import { sb, getCurrentUser, setCurrentUser } from '../core/supabase.js';
 import { buildDocPayload, markSyncFailure, pushDocUpdate, signInWithGoogle, signOutUser, upsertWorkspaceDoc } from '../core/workspace-api.js';
 import { fileType, fsize } from '../ui/helpers.js';
@@ -274,6 +274,7 @@ A.setPref = el => {
 /* ---------- popovers ---------- */
 A.pop = el => {
   const d = el.dataset;
+  if (d.closemodal) closeModal();
   const p = S.ui.pop;
   if (p && p.type === d.pop && p.id === d.id && p.key === d.key && p.i == (d.i != null ? +d.i : undefined) && p.field === d.field) {
     closePop();
@@ -400,6 +401,7 @@ A.openTask = el => {
     toast("You don't have access to that task", { kind: 'err' });
     return;
   }
+  closeModal();
   if (!S.ui.drawer || !document.activeElement?.closest?.('.drawer')) S.ui.drawerOpener = el.isConnected ? focusKey(el) : S.ui.drawerOpener;
   S.ui.drawer = id;
   S.ui.drawerFull = S.prefs.openTasks === 'full' || (S.ui.drawerFull && S.ui.drawer === id);
@@ -543,10 +545,7 @@ A.editTask = el => {
   if (!t) return;
   S.ui.form = {
     title: t.title,
-    desc: (t.desc || '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim(),
+    desc: descToText(t.desc || ''),
     project: t.project,
     status: t.status,
     assignee: t.assignee,
@@ -648,14 +647,7 @@ A.submitTask = () => {
     if (
       !mutate(() => {
         applyPatch(t, base);
-        if (
-          f.desc !==
-          (t.desc || '')
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim()
-        )
-          t.desc = f.desc ? `<p>${esc(f.desc)}</p>` : '';
+        if (f.desc !== descToText(t.desc || '')) t.desc = f.desc ? `<p>${esc(f.desc)}</p>` : '';
         t.attachments.push(...files);
       })
     )

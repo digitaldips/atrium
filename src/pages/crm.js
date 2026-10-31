@@ -106,7 +106,7 @@ function clientLinkSections(c) {
     ? meetings
         .map(
           l =>
-            `<div class="mini" role="button" tabindex="0" data-a="pop" data-pop="gevent" data-id="${esc(l.ref)}"><span class="ftype" style="--c:#1A73E8">${ic('calendar-days', 14)}</span><div class="grow" style="min-width:0"><div style="font-weight:500;font-size:13px">${esc(l.title || '(untitled event)')}</div></div><span class="faint num" style="font-size:11.5px;flex-shrink:0">${l.when ? fmtDate(new Date(l.when)) : ''}</span><button class="ibtn ibtn-xs x" data-a="linkRemove" data-kind="event" data-id="${esc(l.ref)}" aria-label="Unlink meeting">${ic('x', 12)}</button></div>`,
+            `<div class="mini" role="button" tabindex="0" data-a="pop" data-pop="gevent" data-closemodal="1" data-id="${esc(l.ref)}"><span class="ftype" style="--c:#1A73E8">${ic('calendar-days', 14)}</span><div class="grow" style="min-width:0"><div style="font-weight:500;font-size:13px">${esc(l.title || '(untitled event)')}</div></div><span class="faint num" style="font-size:11.5px;flex-shrink:0">${l.when ? fmtDate(new Date(l.when)) : ''}</span><button class="ibtn ibtn-xs x" data-a="linkRemove" data-kind="event" data-id="${esc(l.ref)}" aria-label="Unlink meeting">${ic('x', 12)}</button></div>`,
         )
         .join('')
     : `<div class="faint" style="font-size:12.5px">No linked meetings yet — link an event from its popover.</div>`;

@@ -2,7 +2,7 @@
 import { MOD, ago, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { D, S, client, commentsOf, crmClients, crmLinks, mem, pColor, proj, task } from '../core/store.js';
-import { findLink, mailSuggestion } from '../core/links.js';
+import { findLink, goneMailPreview, mailSuggestion } from '../core/links.js';
 import { googleStatus, ensureGmail, ensureGmailLabels, ensureGmailDrafts } from '../core/google.js';
 import { mergeInbox, safeLink, bulkSelectionWarning } from '../../supabase/functions/_shared/google-pure.js';
 import { av, empty, fmtComment, fsize } from '../ui/helpers.js';
@@ -44,7 +44,9 @@ export function pageInbox() {
      the deep-read cache — that cache carries the same header fields, so
      the preview still renders honestly instead of showing a blank pane. */
   const gsel =
-    gmsgs.find(m => m.id === S.ui.gsel) || (S.ui.gmsg && S.ui.gmsg[S.ui.gsel] && S.ui.gmsg[S.ui.gsel].state === 'ok' ? S.ui.gmsg[S.ui.gsel].msg : null);
+    gmsgs.find(m => m.id === S.ui.gsel) ||
+    ((S.ui.gmsg = S.ui.gmsg || {})[S.ui.gsel] && S.ui.gmsg[S.ui.gsel].state === 'ok' ? S.ui.gmsg[S.ui.gsel].msg : null) ||
+    ((S.ui.gmsg || {})[S.ui.gsel] && S.ui.gmsg[S.ui.gsel].state === 'error' ? goneMailPreview(S.ui.gsel, D().links) : null);
   return `<div class="page flush">
     <div style="display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr);flex:1;min-height:0" class="inbox-grid">
       <style>@media(max-width:900px){.inbox-grid{grid-template-columns:minmax(0,1fr)!important}.inbox-prev{display:${sel || gsel ? 'flex' : 'none'}!important;position:fixed;inset:0;z-index:48;background:var(--surface)}}</style>
@@ -365,6 +367,7 @@ function gmailPreview(m) {
       <button class="ibtn ibtn-sm" data-a="gsel" data-id="" aria-label="Back">${ic('arrow-left', 15)}</button>
       <span class="av sm" style="--c:var(--red)" aria-hidden="true">${ic('mail', 12)}</span><span class="muted" style="font-size:12.5px">Gmail</span><span class="sp"></span>
       ${msg ? gmsgActions(msg) : ''}
+      ${m.gone ? `<div class="alert" style="margin:0 0 12px">${ic('triangle-alert', 15)}<span>This linked message is no longer available in Gmail — it may have been deleted.</span></div>` : ''}
       ${link ? `<a class="btn btn-sm btn-secondary" href="${esc(link)}" target="_blank" rel="noopener noreferrer" aria-label="Open in Gmail">${ic('mail-open', 14)}</a>` : ''}
     </div>
     <div style="padding:20px 28px;max-width:760px;width:100%">

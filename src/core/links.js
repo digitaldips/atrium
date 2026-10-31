@@ -188,3 +188,24 @@ export function eventFromTask(t, clientId = null) {
     linkClientId: clientId || null,
   };
 }
+
+/* Build the honest preview object for a LINKED gmail message whose deep
+   read failed or whose cache entry is gone: the link row carries the last
+   known subject; the preview body renders the deep-read error + Retry. */
+export function goneMailPreview(id, links) {
+  const row = (links || []).find(l => l && l.kind === 'mail' && l.ref === id);
+  return { id, from: '', subject: (row && row.title) || '(linked message)', snippet: '', gone: true, labels: [] };
+}
+
+/* Task descriptions are stored as simple esc()-wrapped HTML (<p>…</p>).
+   Edit fields need the plain text back: strip the wrapper tags, then
+   decode EXACTLY the five entities esc() produces (its inverse — anything
+   else passes through), then collapse whitespace. Pure; no DOM. This keeps
+   the edit round-trip lossless instead of double-escaping ('R&D' etc.). */
+export const decodeEsc = s =>
+  String(s ?? '').replace(/&(?:amp|lt|gt|quot|#39);/g, e => ({ '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" })[e]);
+export function descToText(html) {
+  return decodeEsc(String(html ?? '').replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
+}

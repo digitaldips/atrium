@@ -285,3 +285,28 @@ test('eventFromTask without a due date prefills an empty date honestly', () => {
   assert.equal(p.date, '');
   assert.ok(p.description.includes('Send proposal to Koffie & Co'));
 });
+
+/* --- descToText / decodeEsc (review fixes: lossless edit round-trip) --- */
+import { decodeEsc, descToText, goneMailPreview } from '../src/core/links.js';
+/* esc mirrored inline: utils.js touches navigator at module load (node-hostile). */
+const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+test('descToText: R&D round-trips through esc without double-escaping', () => {
+  const desc = 'R&D review with Q&A <draft>';
+  assert.equal(descToText('<p>' + esc(desc) + '</p>'), desc);
+});
+test('descToText: strips wrapper tags and collapses whitespace', () => {
+  assert.equal(descToText('<p>hello   world</p>'), 'hello world');
+  assert.equal(descToText(''), '');
+  assert.equal(descToText(null), '');
+});
+test('decodeEsc: decodes exactly the five esc entities; unknown passes through', () => {
+  assert.equal(decodeEsc('&amp;&lt;&gt;&quot;&#39;'), '&<>"\'');
+  assert.equal(decodeEsc('&unknown; &nbsp;'), '&unknown; &nbsp;');
+});
+test('goneMailPreview: subject from the link row; honest fallback without one', () => {
+  const links = [{ id: 'l1', clientId: 'c1', kind: 'mail', ref: 'g1', title: 'Re: quote' }];
+  assert.equal(goneMailPreview('g1', links).subject, 'Re: quote');
+  assert.equal(goneMailPreview('g1', links).gone, true);
+  assert.equal(goneMailPreview('gx', links).subject, '(linked message)');
+  assert.deepEqual(goneMailPreview('gx', null).labels, []);
+});

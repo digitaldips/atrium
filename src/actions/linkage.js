@@ -19,7 +19,7 @@ import {
 } from '../core/links.js';
 import { toast, mutate } from '../ui/toast.js';
 import { go, render } from '../shell/render.js';
-import { openModal } from '../overlays/modals.js';
+import { closeModal, openModal } from '../overlays/modals.js';
 import { closePop } from '../overlays/popovers.js';
 import { ensureCalendarList, ensureFreebusy, ensureGmailMessage, googleStatus } from '../core/google.js';
 import { gEvForm } from './google.js';
@@ -192,6 +192,7 @@ A.gTaskSchedule = el => {
 A.gOpenMail = el => {
   const id = el.dataset.id;
   if (!id) return;
+  closeModal();
   S.ui.inboxCat = 'gmail';
   S.ui.gview = 'mail';
   S.ui.inboxSel = null;
