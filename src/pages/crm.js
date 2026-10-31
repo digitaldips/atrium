@@ -146,7 +146,7 @@ export function dealFormHtml(m, H) {
       <div class="field grow" style="min-width:170px"><label class="label" for="d-client">Client</label><select class="select" id="d-client" data-in="crmForm" data-f="client">${cls
         .map(c => `<option value="${c.id}" ${f.client === c.id ? 'selected' : ''}>${esc(c.name)}${c.company ? ' — ' + esc(c.company) : ''}</option>`)
         .join('')}${cls.length ? '' : '<option value="" disabled>No clients yet</option>'}</select></div>
-      <div class="field" style="width:140px"><label class="label" for="d-value">Value (EUR)</label><input class="input" id="d-value" type="number" min="0" step="100" data-in="crmForm" data-f="value" value="${esc(f.value || '')}" placeholder="0"></div>
+      <div class="field" style="width:140px"><label class="label" for="d-value">Value (EUR)</label><input class="input" id="d-value" type="number" min="0" step="1" data-in="crmForm" data-f="value" value="${esc(f.value || '')}" placeholder="0"></div>
     </div>
     <div class="row" style="gap:12px;flex-wrap:wrap">
       <div class="field grow" style="min-width:150px"><label class="label" for="d-stage">Stage</label><select class="select" id="d-stage" data-in="crmForm" data-f="stage">${Object.values(

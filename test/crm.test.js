@@ -207,3 +207,14 @@ test('crmSeedDeals returns four deals across stages, all linked to seeded client
     assert.equal(typeof d.created, 'number');
   }
 });
+
+/* --- value sanitizer (review fix 3) --- */
+import { sanitizeDealValue } from '../src/core/crm.js';
+test('sanitizeDealValue: accepts normal amounts, clamps negatives and junk to 0', () => {
+  assert.equal(sanitizeDealValue('1250'), 1250);
+  assert.equal(sanitizeDealValue(92.4), 92);
+  assert.equal(sanitizeDealValue(-50), 0);
+  assert.equal(sanitizeDealValue('abc'), 0);
+  assert.equal(sanitizeDealValue(undefined), 0);
+  assert.equal(sanitizeDealValue(0), 0);
+});

@@ -77,6 +77,11 @@ export const activeClientCount = clients => (Array.isArray(clients) ? clients : 
    in practice; decimals round on display only). Cached formatter; the
    en-IE locale gives the calm "€1,250" shape. */
 const EUR_FMT = new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
+export function sanitizeDealValue(v) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 export function eur(v) {
   const n = Number(v);
   return EUR_FMT.format(Number.isFinite(n) ? Math.round(n) : 0);

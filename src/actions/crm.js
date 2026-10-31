@@ -1,7 +1,7 @@
 /* ---------- CRM actions: clients + deals (all via mutate/save) ---------- */
 import { $, uid } from '../core/utils.js';
 import { D, S, client, crmClients, deal } from '../core/store.js';
-import { CRM_STAGE, eur, isValidTransition } from '../core/crm.js';
+import { CRM_STAGE, eur, isValidTransition, sanitizeDealValue } from '../core/crm.js';
 import { mutate, toast } from '../ui/toast.js';
 import { fxSet, go, render } from '../shell/render.js';
 import { openModal } from '../overlays/modals.js';
@@ -148,7 +148,7 @@ A.submitDeal = () => {
     render();
     return;
   }
-  const value = Number(f.value) || 0;
+  const value = sanitizeDealValue(f.value);
   const stage = CRM_STAGE[f.stage] ? f.stage : 'lead';
   const close = f.close || null;
   if (m.edit) {
@@ -209,6 +209,7 @@ A.removeDeal = el => {
 export function moveDeal(id, stage) {
   const d = deal(id);
   if (!d) return;
+  if (d.stage === stage) return;
   if (!isValidTransition(d.stage, stage)) {
     toast('That pipeline stage is unknown', { kind: 'err', ms: 2200 });
     return;

@@ -87,29 +87,15 @@ document.addEventListener('dragover', e => {
     DRAG.col = col.dataset.dropCol;
     DRAG.before = after ? after.dataset.dragCard : null;
   } else if (DRAG.type === 'deal') {
-    /* Pipeline columns reuse the board visuals: highlight the target stage
-       and show the drop line where the deal card will land. */
+    /* Pipeline columns reuse the board visuals: highlight the target stage.
+       Card order inside a column is NOT persisted (columns sort by created),
+       so no drop line is shown for deals — only the stage move is real. */
     const col = e.target.closest('[data-drop-stage]');
     if (!col) return;
     e.preventDefault();
     $$('.bcol.over').forEach(x => x !== col && x.classList.remove('over'));
     col.classList.add('over');
-    const body = col.querySelector('[data-col-body]');
-    if (!body) return;
-    const cards = [...body.querySelectorAll('.kcard:not(.dragging)')];
-    const after = cards.find(c => {
-      const r = c.getBoundingClientRect();
-      return e.clientY < r.top + r.height / 2;
-    });
-    let line = $('.drop-line');
-    if (!line) {
-      line = document.createElement('div');
-      line.className = 'drop-line';
-    }
-    const ref = after || body.querySelector('.addcard');
-    if (line.nextSibling !== ref || line.parentNode !== body) body.insertBefore(line, ref);
     DRAG.stage = col.dataset.dropStage;
-    DRAG.before = after ? after.dataset.dragDeal : null;
   } else if (DRAG.type === 'row') {
     const row = e.target.closest('.trow[data-task-row]');
     if (!row || row.dataset.taskRow === DRAG.id) return;
