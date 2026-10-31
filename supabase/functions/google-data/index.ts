@@ -168,10 +168,12 @@ Deno.serve(async (req: Request) => {
       /* ---------- one message, full ---------- */
       case 'gmail/message': {
         if (req.method !== 'GET') return json(req, { error: 'method_not_allowed' }, 405);
-        const id = safeId(p.get('id') || '');
-        if (!id) return json(req, { error: 'invalid_id' }, 400);
+        /* Auth FIRST: an unauthenticated caller gets 401 before any
+           validation, so endpoints never behave differently for attackers. */
         const auth = await withAccessToken(req);
         if (auth instanceof Response) return auth;
+        const id = safeId(p.get('id') || '');
+        if (!id) return json(req, { error: 'invalid_id' }, 400);
         const res = await authedGet(`${GMAIL_API}/messages/${encodeURIComponent(id)}?format=full`, auth.accessToken);
         if (!res.ok) return googleError(req, res);
         const full = await res.json();
@@ -181,10 +183,10 @@ Deno.serve(async (req: Request) => {
       /* ---------- one thread, oldest → newest ---------- */
       case 'gmail/thread': {
         if (req.method !== 'GET') return json(req, { error: 'method_not_allowed' }, 405);
-        const id = safeId(p.get('id') || '');
-        if (!id) return json(req, { error: 'invalid_id' }, 400);
         const auth = await withAccessToken(req);
         if (auth instanceof Response) return auth;
+        const id = safeId(p.get('id') || '');
+        if (!id) return json(req, { error: 'invalid_id' }, 400);
         const res = await authedGet(`${GMAIL_API}/threads/${encodeURIComponent(id)}?format=full`, auth.accessToken);
         if (!res.ok) return googleError(req, res);
         const full = await res.json();
@@ -194,14 +196,14 @@ Deno.serve(async (req: Request) => {
       /* ---------- search (q passthrough, paged) ---------- */
       case 'gmail/search': {
         if (req.method !== 'GET') return json(req, { error: 'method_not_allowed' }, 405);
+        const auth = await withAccessToken(req);
+        if (auth instanceof Response) return auth;
         const q = validGmailQuery(p.get('q') || '');
         if (!q) return json(req, { error: 'invalid_query' }, 400);
         const max = clampNum(p.get('max'), { min: 1, max: 50, fallback: 25 });
         const pageToken = safeId(p.get('pageToken') || '');
         const params = new URLSearchParams({ q, maxResults: String(max) });
         if (pageToken) params.set('pageToken', pageToken);
-        const auth = await withAccessToken(req);
-        if (auth instanceof Response) return auth;
         const { res, ids, nextPageToken } = await listGmail(auth.accessToken, params);
         if (res) return googleError(req, res);
         return json(req, { connected: true, messages: await fetchGmailBatch(auth.accessToken, ids), nextPageToken });
@@ -210,11 +212,11 @@ Deno.serve(async (req: Request) => {
       /* ---------- attachment data (base64 → blob client-side) ---------- */
       case 'gmail/attachment': {
         if (req.method !== 'GET') return json(req, { error: 'method_not_allowed' }, 405);
+        const auth = await withAccessToken(req);
+        if (auth instanceof Response) return auth;
         const id = safeId(p.get('id') || '');
         const attachmentId = safeId(p.get('attachmentId') || '');
         if (!id || !attachmentId) return json(req, { error: 'invalid_id' }, 400);
-        const auth = await withAccessToken(req);
-        if (auth instanceof Response) return auth;
         const res = await authedGet(`${GMAIL_API}/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}`, auth.accessToken);
         if (!res.ok) return googleError(req, res);
         const full = (await res.json().catch(() => null)) as { data?: unknown; size?: unknown } | null;
@@ -226,6 +228,8 @@ Deno.serve(async (req: Request) => {
       /* ---------- send (RFC 5322 raw MIME) ---------- */
       case 'gmail/send': {
         if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
+        const auth = await withAccessToken(req);
+        if (auth instanceof Response) return auth;
         const body = await readJson(req);
         const to = typeof body?.to === 'string' ? body.to.trim() : '';
         const text = typeof body?.body === 'string' ? body.body : '';
@@ -240,8 +244,6 @@ Deno.serve(async (req: Request) => {
         const raw = buildMime({ to, cc, subject, body: text, inReplyTo, references });
         const sendBody: Record<string, string> = { raw };
         if (threadId) sendBody.threadId = threadId;
-        const auth = await withAccessToken(req);
-        if (auth instanceof Response) return auth;
         const res = await fetch(`${GMAIL_API}/messages/send`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' },
@@ -259,6 +261,8 @@ Deno.serve(async (req: Request) => {
       /* ---------- modify labels (read/unread, archive) ---------- */
       case 'gmail/modify': {
         if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
+        const auth = await withAccessToken(req);
+        if (auth instanceof Response) return auth;
         const id = safeId(p.get('id') || '');
         if (!id) return json(req, { error: 'invalid_id' }, 400);
         const body = await readJson(req);
@@ -269,8 +273,6 @@ Deno.serve(async (req: Request) => {
         }
         if (body?.archive === true) removeLabelIds.push('INBOX');
         if (!addLabelIds.length && !removeLabelIds.length) return json(req, { error: 'nothing_to_do' }, 400);
-        const auth = await withAccessToken(req);
-        if (auth instanceof Response) return auth;
         const res = await fetch(`${GMAIL_API}/messages/${encodeURIComponent(id)}/modify`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' },
@@ -285,10 +287,10 @@ Deno.serve(async (req: Request) => {
       case 'gmail/trash':
       case 'gmail/untrash': {
         if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
-        const id = safeId(p.get('id') || '');
-        if (!id) return json(req, { error: 'invalid_id' }, 400);
         const auth = await withAccessToken(req);
         if (auth instanceof Response) return auth;
+        const id = safeId(p.get('id') || '');
+        if (!id) return json(req, { error: 'invalid_id' }, 400);
         const verb = act === 'gmail/trash' ? 'trash' : 'untrash';
         const res = await fetch(`${GMAIL_API}/messages/${encodeURIComponent(id)}/${verb}`, {
           method: 'POST',
@@ -320,10 +322,10 @@ Deno.serve(async (req: Request) => {
       /* ---------- event insert ---------- */
       case 'calendar/event': {
         if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
-        const resource = buildEventResource(await readJson(req));
-        if (!resource) return json(req, { error: 'invalid_event' }, 400);
         const auth = await withAccessToken(req);
         if (auth instanceof Response) return auth;
+        const resource = buildEventResource(await readJson(req));
+        if (!resource) return json(req, { error: 'invalid_event' }, 400);
         const res = await fetch(`${CAL_API}?sendUpdates=all`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' },
@@ -337,12 +339,12 @@ Deno.serve(async (req: Request) => {
       /* ---------- event update ---------- */
       case 'calendar/event/update': {
         if (req.method !== 'PATCH') return json(req, { error: 'method_not_allowed' }, 405);
+        const auth = await withAccessToken(req);
+        if (auth instanceof Response) return auth;
         const id = safeId(p.get('id') || '');
         if (!id) return json(req, { error: 'invalid_id' }, 400);
         const resource = buildEventResource(await readJson(req));
         if (!resource) return json(req, { error: 'invalid_event' }, 400);
-        const auth = await withAccessToken(req);
-        if (auth instanceof Response) return auth;
         const res = await fetch(`${CAL_API}/${encodeURIComponent(id)}?sendUpdates=all`, {
           method: 'PATCH',
           headers: { Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' },
@@ -356,10 +358,10 @@ Deno.serve(async (req: Request) => {
       /* ---------- event delete ---------- */
       case 'calendar/event/delete': {
         if (req.method !== 'DELETE') return json(req, { error: 'method_not_allowed' }, 405);
-        const id = safeId(p.get('id') || '');
-        if (!id) return json(req, { error: 'invalid_id' }, 400);
         const auth = await withAccessToken(req);
         if (auth instanceof Response) return auth;
+        const id = safeId(p.get('id') || '');
+        if (!id) return json(req, { error: 'invalid_id' }, 400);
         const res = await fetch(`${CAL_API}/${encodeURIComponent(id)}?sendUpdates=all`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${auth.accessToken}` },
