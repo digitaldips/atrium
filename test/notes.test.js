@@ -15,6 +15,7 @@ import {
   attachmentRefFor,
   ensureNotes,
   makeNote,
+  noteApplyBody,
   noteAttachmentPath,
   noteSafeLinkUrl,
   noteSnippet,
@@ -384,6 +385,103 @@ test('noteSnippet renders a plain-text preview with an ellipsis', () => {
   assert.ok(noteSnippet('<p>' + 'z'.repeat(300) + '</p>', 110).endsWith('…'));
   assert.equal(noteSnippet('', 110), '');
   assert.equal(noteSnippet(null, 110), '');
+});
+
+/* ---------- F4: body edits stamp `updated` ---------- */
+
+test('noteApplyBody assigns the new html and stamps updated only when the body changed', () => {
+  const n = makeNote({ id: 'n1', title: 'T', html: '<p>one</p>', created: 1, updated: 100 });
+  assert.equal(noteApplyBody(n, '<p>two</p>', 555), true);
+  assert.equal(n.html, '<p>two</p>');
+  assert.equal(n.updated, 555, 'a real body change stamps updated');
+
+  const before = n.updated;
+  assert.equal(noteApplyBody(n, '<p>two</p>', 999), false, 'identical html is a no-op');
+  assert.equal(n.updated, before, 'no change → no timestamp churn');
+  assert.equal(noteApplyBody(null, '<p>x</p>', 1), false, 'null note is a safe no-op');
+});
+
+test('noteApplyBody keeps sortNotes honest: a body edit surfaces the note as newest', () => {
+  const a = makeNote({ id: 'a', updated: 500, html: '<p>a</p>' });
+  const b = makeNote({ id: 'b', updated: 900, html: '<p>b</p>' });
+  noteApplyBody(a, '<p>a2</p>', 1000);
+  assert.deepEqual(
+    sortNotes([a, b]).map(n => n.id),
+    ['a', 'b'],
+    'the edited note is now newest',
+  );
+});
+
+/* ---------- F5b: hydration trust boundary — junk rows are repaired ---------- */
+
+test('ensureNotes repairs a row whose attachments is a truthy non-array (the self-DoS shape)', () => {
+  const doc = { notes: [{ id: 'n1', title: 'Broken', html: '<p>keep</p>', created: 1, updated: 2, pinned: false, attachments: 'x' }] };
+  ensureNotes(doc);
+  assert.deepEqual(doc.notes[0].attachments, [], 'attachments reset to []');
+  assert.equal(doc.notes[0].title, 'Broken', 'the rest of the row is preserved');
+  assert.equal(doc.notes[0].html, '<p>keep</p>');
+});
+
+test('ensureNotes coerces missing fields on note rows', () => {
+  const doc = { notes: [{ id: 'n2', title: 'Sparse' }] };
+  ensureNotes(doc);
+  const n = doc.notes[0];
+  assert.equal(n.html, '');
+  assert.equal(n.pinned, false);
+  assert.deepEqual(n.attachments, []);
+  assert.ok(Number.isFinite(n.created) && Number.isFinite(n.updated), 'timestamps coerced to numbers');
+});
+
+test('ensureNotes drops junk attachment refs but keeps valid ones', () => {
+  const good = { name: 'a.txt', path: 'u1/n1/a.txt', size: 3, type: 'text/plain' };
+  const doc = { notes: [{ id: 'n3', attachments: [good, 'junk', null, { name: 'bad', path: 'nope', size: -1, type: 'x' }] }] };
+  ensureNotes(doc);
+  assert.equal(doc.notes[0].attachments.length, 1, 'only the valid ref survives');
+  assert.deepEqual(doc.notes[0].attachments[0], good);
+});
+
+test('ensureNotes drops unrepairable non-object rows instead of crashing the page', () => {
+  const doc = { notes: [null, 42, 'x', { id: 'n4', title: 'Real', html: '<p>y</p>', created: 1, updated: 2, pinned: false, attachments: [] }] };
+  ensureNotes(doc);
+  assert.equal(doc.notes.length, 1);
+  assert.equal(doc.notes[0].id, 'n4');
+});
+
+test('ensureNotes keeps unknown extra fields on note rows (zero-loss beyond genuine repairs)', () => {
+  const doc = { notes: [{ id: 'n5', title: 'T', html: '', created: 1, updated: 2, pinned: false, attachments: [], color: '#fff' }] };
+  ensureNotes(doc);
+  assert.equal(doc.notes[0].color, '#fff', 'fields makeNote does not know survive');
+});
+
+test('ensureNotes keeps well-formed note rows byte-identical AND by reference', () => {
+  const rows = [
+    { id: 'n1', title: 'A', html: '<p>a</p>', created: 1, updated: 2, pinned: false, attachments: [] },
+    {
+      id: 'n2',
+      title: 'B',
+      html: '<p>b</p>',
+      created: 3,
+      updated: 4,
+      pinned: true,
+      attachments: [{ name: 'a.txt', path: 'u1/n2/a.txt', size: 1, type: 'text/plain' }],
+    },
+  ];
+  const notes = [...rows];
+  const doc = { notes };
+  const before = JSON.stringify(doc);
+  ensureNotes(doc);
+  assert.equal(JSON.stringify(doc), before, 'well-formed rows are byte-identical');
+  assert.equal(doc.notes, notes, 'array kept by reference when nothing needed repair');
+  assert.equal(doc.notes[0], rows[0], 'row kept by reference');
+  assert.equal(doc.notes[1], rows[1], 'row kept by reference');
+});
+
+test('ensureNotes row normalization is idempotent', () => {
+  const doc = { notes: [{ id: 'n1', attachments: 'x', extra: 1 }] };
+  ensureNotes(doc);
+  const once = JSON.stringify(doc);
+  ensureNotes(doc);
+  assert.equal(JSON.stringify(doc), once, 'second run changes nothing');
 });
 
 /* ---------- seed ---------- */

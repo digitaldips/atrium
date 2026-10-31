@@ -13,9 +13,10 @@
 -- the owner can mint a download link for their own objects, and the
 -- client keeps the expiry short (300 s).
 --
--- The bucket row is created idempotently here so a fresh self-hosted clone
--- gets it by replaying migrations; on the live stack it was created
--- through the Storage API (POST /storage/v1/bucket, see evidence).
+-- Both statements are REPLAY-SAFE so re-running this file on an
+-- already-migrated stack is a clean no-op (Postgres has no CREATE POLICY
+-- IF NOT EXISTS): the bucket rides ON CONFLICT upsert, and the policy is
+-- created only when pg_policies does not list it yet.
 
 INSERT INTO storage.buckets (id, name, public, file_size_limit)
 VALUES ('atrium', 'atrium', false, 10485760)
@@ -23,13 +24,23 @@ ON CONFLICT (id) DO UPDATE
   SET public = false,
       file_size_limit = 10485760;
 
-CREATE POLICY notes_objects_owner_scoped ON storage.objects
-  FOR ALL TO authenticated
-  USING (
-    bucket_id = 'atrium'
-    AND COALESCE((storage.foldername(name))[1], '') = auth.uid()::text
-  )
-  WITH CHECK (
-    bucket_id = 'atrium'
-    AND COALESCE((storage.foldername(name))[1], '') = auth.uid()::text
-  );
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'notes_objects_owner_scoped'
+  ) THEN
+    CREATE POLICY notes_objects_owner_scoped ON storage.objects
+      FOR ALL TO authenticated
+      USING (
+        bucket_id = 'atrium'
+        AND COALESCE((storage.foldername(name))[1], '') = auth.uid()::text
+      )
+      WITH CHECK (
+        bucket_id = 'atrium'
+        AND COALESCE((storage.foldername(name))[1], '') = auth.uid()::text
+      );
+  END IF;
+END $$;

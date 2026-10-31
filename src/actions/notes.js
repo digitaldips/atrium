@@ -11,7 +11,7 @@
 import { $, esc, uid } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { D, S, noteById, save } from '../core/store.js';
-import { UNTITLED, attachmentRefFor, makeNote, noteSafeLinkUrl, noteTitleFromHtml, removeNote } from '../core/notes.js';
+import { UNTITLED, attachmentRefFor, makeNote, noteApplyBody, noteSafeLinkUrl, noteTitleFromHtml, removeNote } from '../core/notes.js';
 import { sanitizeNoteHtml } from '../core/sanitize.js';
 import { sb, getCurrentUser } from '../core/supabase.js';
 import { mutate, toast } from '../ui/toast.js';
@@ -42,13 +42,16 @@ const needStorage = () => {
 /* ---------- autosave (~1s debounce through save()) ---------- */
 const draft = { t: null };
 
-/* Memory stays live on every keystroke: note.html gets the SANITIZED
-   body immediately, so a render — or a navigation, or a sync — can never
-   lose or leak unsanitized bytes. Only the save() call is debounced. */
-function commitLive(ed) {
-  const n = noteById(ed.dataset.id);
+/* The autosave commits ONLY the editor body, resolved by note id from the
+   live DOM (#note-editor). It must never read another element: the title
+   <input> once rode this same commit and its empty innerHTML wiped the
+   body on the ~1s tick — a title carries no body. */
+function commitLive(id) {
+  const ed = $('#note-editor');
+  if (!ed || ed.dataset.id !== id) return false;
+  const n = noteById(id);
   if (!n) return false;
-  n.html = sanitizeNoteHtml(ed.innerHTML);
+  noteApplyBody(n, sanitizeNoteHtml(ed.innerHTML));
   return true;
 }
 
@@ -57,11 +60,14 @@ function setSavedLabel(txt) {
   if (el) el.textContent = txt;
 }
 
-function scheduleAutosave(ed) {
+/* Every edit path commits to memory synchronously (input, paste, toolbar,
+   drop), so memory is always current and lossless; this timer only
+   persists through save(). It takes the NOTE ID, never an element. */
+function scheduleAutosave(id) {
   clearTimeout(draft.t);
   draft.t = setTimeout(() => {
     draft.t = null;
-    if (!commitLive(ed)) return;
+    commitLive(id); /* belt: a no-op unless the live editor belongs to this note */
     saveDoc();
   }, AUTOSAVE_MS);
 }
@@ -77,7 +83,7 @@ export function flushNoteDraft() {
   clearTimeout(draft.t);
   draft.t = null;
   const ed = $('#note-editor');
-  if (ed && commitLive(ed)) save();
+  if (ed && commitLive(ed.dataset.id)) save();
 }
 window.addEventListener('pagehide', flushNoteDraft);
 document.addEventListener('visibilitychange', () => {
@@ -94,10 +100,10 @@ function updateCounts(ed) {
 
 IN.noteBody = el => {
   if (!el.dataset.id) return;
-  commitLive(el);
+  commitLive(el.dataset.id);
   updateCounts(el);
   setSavedLabel('Saving…');
-  scheduleAutosave(el);
+  scheduleAutosave(el.dataset.id);
 };
 
 IN.noteTitle = el => {
@@ -111,7 +117,10 @@ IN.noteTitle = el => {
   const row = document.querySelector(`[data-rowtitle="${CSS.escape(el.dataset.id)}"]`);
   if (row) row.textContent = n.title || noteTitleFromHtml(n.html) || UNTITLED;
   setSavedLabel('Saving…');
-  scheduleAutosave(el);
+  /* Title edits ride the SAME autosave timer as the body — but the timer
+     commits the EDITOR by note id, never this input, so a title keystroke
+     can never wipe the body. */
+  scheduleAutosave(el.dataset.id);
 };
 
 /* ---------- notes-page search (list pane) ---------- */
@@ -159,7 +168,7 @@ A.noteDelete = el => {
   if (!n) return;
   confirmDlg({
     title: 'Delete note?',
-    body: `“${n.title || noteTitleFromHtml(n.html) || UNTITLED}” will be deleted. Its attachments in storage are removed with it.`,
+    body: `“${esc(n.title || noteTitleFromHtml(n.html) || UNTITLED)}” will be deleted. Its attachments in storage are removed with it.`,
     ok: 'Delete note',
     danger: true,
     run: async () => {
@@ -209,10 +218,10 @@ const NOTE_CMDS = {
 };
 
 function afterNoteCmd(ed) {
-  commitLive(ed);
+  commitLive(ed.dataset.id);
   updateCounts(ed);
   setSavedLabel('Saving…');
-  scheduleAutosave(ed);
+  scheduleAutosave(ed.dataset.id);
 }
 
 document.addEventListener('mousedown', e => {
@@ -334,12 +343,38 @@ document.addEventListener('paste', e => {
   afterNoteCmd(ed);
 });
 
+/* ---------- drop: sanitize AT DROP TIME (same gate as paste) ---------- */
+/* Rich-HTML drags (text/html from another window or app) land on a
+   contenteditable through the browser's default insertion unless the drop
+   is prevented — and the global drag-drop handler deliberately ignores
+   non-file drops outside its own dropzones. So the editor gets its own
+   listener mirroring the paste interceptor: preventDefault, then insert
+   ONLY the sanitized html. Plain drags (no text/html) keep the default
+   insertion; a dropped FILE goes through the real attachment upload. */
+document.addEventListener('drop', e => {
+  const ed = e.target.closest?.('#note-editor');
+  if (!ed) return;
+  const files = e.dataTransfer?.files;
+  if (files && files.length) {
+    e.preventDefault();
+    const n = noteById(ed.dataset.id);
+    if (n) uploadNoteFiles(n, files);
+    return;
+  }
+  const html = e.dataTransfer ? e.dataTransfer.getData('text/html') : '';
+  if (!html) return;
+  e.preventDefault();
+  const clean = sanitizeNoteHtml(html);
+  if (clean) document.execCommand('insertHTML', false, clean);
+  else document.execCommand('insertText', false, e.dataTransfer.getData('text/plain') || '');
+  afterNoteCmd(ed);
+});
+
 /* ---------- attachments: upload / download / remove ---------- */
-IN.noteUpload = async el => {
-  const n = noteById(el.dataset.id);
-  const files = [...(el.files || [])];
-  el.value = '';
-  if (!n || !files.length) return;
+/* The upload flow is shared by the file input and the editor drop handler
+   (a file dropped on the body uploads as an attachment). */
+async function uploadNoteFiles(n, files) {
+  if (!files.length) return;
   if (!needStorage()) return;
   const userId = getCurrentUser();
   for (const file of files) {
@@ -370,6 +405,14 @@ IN.noteUpload = async el => {
       render();
     }
   }
+}
+
+IN.noteUpload = async el => {
+  const n = noteById(el.dataset.id);
+  const files = [...(el.files || [])];
+  el.value = '';
+  if (!n || !files.length) return;
+  await uploadNoteFiles(n, files);
 };
 
 A.noteAttachDl = async el => {

@@ -19,16 +19,57 @@
 export const UNTITLED = 'Untitled note';
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB — enforced client-side, bucket limit is the server backstop
 
-/* ---------- zero-loss doc initializer ---------- */
+/* ---------- zero-loss doc initializer + hydration trust boundary ---------- */
 /* Same contract as ensureCrmData/ensureDocShape: the workspace document
    predating Notes has no notes[]. This initializer runs on hydrate AND
-   bootstrap AND the trusted-cache bind and ONLY guarantees notes exists —
-   existing arrays are kept by reference, every other key is untouched,
-   corrupt non-array values are reset to empty. Idempotent. */
+   bootstrap AND the trusted-cache bind. The rows come from the server
+   document, so EVERY row passes through makeNote here — that is the
+   hydration trust boundary: corrupt field values are coerced honestly,
+   a truthy non-array attachments value resets to [], junk attachment
+   refs are dropped and missing fields are filled. Rows that cannot be
+   repaired at all (non-objects) are dropped rather than allowed to break
+   the render. Well-formed rows are kept BY REFERENCE and byte-identical
+   (zero-loss: only genuine repairs change bytes), which also keeps the
+   pass idempotent. */
 export function ensureNotes(doc) {
   if (!doc || typeof doc !== 'object') return doc;
-  if (!Array.isArray(doc.notes)) doc.notes = [];
+  if (!Array.isArray(doc.notes)) {
+    doc.notes = [];
+    return doc;
+  }
+  let dirty = false;
+  const rows = doc.notes.map(row => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      dirty = true;
+      return null; /* a junk row cannot be repaired — drop it, don't crash the page */
+    }
+    /* Spread order keeps the row's own key order and any extra fields;
+       makeNote only overrides the seven known fields. */
+    const fixed = { ...row, ...makeNote(row) };
+    if (JSON.stringify(fixed) !== JSON.stringify(row)) {
+      dirty = true;
+      return fixed;
+    }
+    return row;
+  });
+  if (!dirty) return doc;
+  doc.notes = rows.filter(Boolean);
   return doc;
+}
+
+/* ---------- body commit (updated stamping) ---------- */
+/* The editor/autosave commit path hands in the freshly sanitized html.
+   A REAL content change assigns html AND stamps `updated` — body edits
+   must drive sortNotes ordering and the ago() stamps exactly like title
+   edits do. An unchanged commit (toolbar click that altered nothing, a
+   second commit of the same bytes) is a no-op that never churns the
+   timestamp. `now` is injectable so node tests can pin the stamp. */
+export function noteApplyBody(n, html, now = Date.now()) {
+  if (!n || typeof n !== 'object') return false;
+  if (n.html === html) return false;
+  n.html = html;
+  n.updated = now;
+  return true;
 }
 
 /* ---------- row factory ---------- */
