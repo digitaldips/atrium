@@ -8,6 +8,11 @@
 
 /* ---------- document payload ---------- */
 
+/* The Postgres table backing the workspace document. ONE constant, ONE
+   point of change: a future backend target may name the table differently
+   (AC3, backend-agnostic build). */
+export const WORKSPACES_TABLE = 'workspaces';
+
 /* The workspace document persisted to public.workspaces.data (jsonb):
    exactly the app state triple, nothing from S.ui. */
 export function buildDocPayload(data, prefs, views) {
@@ -85,14 +90,24 @@ export function isTrustedCache(cached, userId) {
 /* Mirror the authenticated account onto the workspace's own identity:
    the 'me' seed member gets the real name+email and prefs.name gets the
    real name, so the in-app identity matches the account from first
-   render. Applied at signup and at bootstrap (fresh row); an existing
-   synced doc keeps whatever identity the user chose in-app. */
+   render. Applied at signup, at OAuth bootstrap (fresh row) and wherever
+   a fresh account identity must land; an existing synced doc keeps
+   whatever identity the user chose in-app. */
+
+/* Pure identity mapping (AC4b): the display name for an auth user, from
+   Google-style user_metadata — full_name, then name, then the capitalised
+   email local-part, then a neutral fallback. */
+export function nameFromMetadata(user) {
+  if (!user) return '';
+  const meta = user.user_metadata || {};
+  const fallback = (user.email || '').split('@')[0].replace(/\b\w/g, c => c.toUpperCase());
+  return meta.full_name || meta.name || fallback || 'You';
+}
+
 export function applyUserIdentity(S, user) {
   if (!S || !user) return false;
   const email = user.email || '';
-  const metaName = user.user_metadata?.full_name || user.user_metadata?.name || '';
-  const fallback = email.split('@')[0].replace(/\b\w/g, c => c.toUpperCase());
-  const name = metaName || fallback || 'You';
+  const name = nameFromMetadata(user);
   const meRow = S.data?.members?.find(m => m.id === S.data?.me);
   if (meRow) {
     meRow.name = name;
@@ -102,11 +117,41 @@ export function applyUserIdentity(S, user) {
   return !!(meRow || S.prefs);
 }
 
+/* ---------- google-only OAuth sign-in (Operance contract) ---------- */
+
+/* The exact signInWithOAuth argument object, as one pure, testable
+   function (AC1): same contract as workspace.operanceai.com — Google
+   provider, back to the app origin, hd-restricted to the Operance
+   domain, always showing the account chooser. */
+export function googleOAuthArgs(redirectTo) {
+  return {
+    provider: 'google',
+    options: {
+      redirectTo,
+      queryParams: {
+        hd: 'operanceai.com',
+        prompt: 'select_account',
+      },
+    },
+  };
+}
+
+/* Kick off the Google OAuth flow. On success supabase-js redirects the
+   browser to Google; on return the app boots fresh and the existing
+   getSession() boot path hydrates the workspace. Provider errors (e.g.
+   the backend has no Google provider configured) are thrown so the login
+   surface can show them honestly. */
+export async function signInWithGoogle(client, redirectTo) {
+  const { data, error } = await client.auth.signInWithOAuth(googleOAuthArgs(redirectTo));
+  if (error) throw new Error(errMessage(error));
+  return data;
+}
+
 /* ---------- workspace document API (client passed in) ---------- */
 
 /* SELECT the owner's workspace row, or null when they have none. */
 export async function loadWorkspaceDoc(client, userId) {
-  const { data, error } = await client.from('workspaces').select('id, name, data, updated_at').eq('owner_id', userId).maybeSingle();
+  const { data, error } = await client.from(WORKSPACES_TABLE).select('id, name, data, updated_at').eq('owner_id', userId).maybeSingle();
   if (error) throw new Error(errMessage(error));
   return data;
 }
@@ -115,7 +160,7 @@ export async function loadWorkspaceDoc(client, userId) {
    so this inserts on first login and updates afterwards. */
 export async function upsertWorkspaceDoc(client, userId, payload, name) {
   const { data, error } = await client
-    .from('workspaces')
+    .from(WORKSPACES_TABLE)
     .upsert({ owner_id: userId, name: name || 'My workspace', data: payload }, { onConflict: 'owner_id' })
     .select()
     .single();
