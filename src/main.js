@@ -75,7 +75,7 @@ async function init() {
     document.body.appendChild(l);
   }
   const h = (location.hash || '').slice(1);
-  const authRoutes = ['login', 'signup', 'onboarding'];
+  const authRoutes = ['login', 'onboarding'];
   const session = supabaseConfigured ? (await sb.auth.getSession()).data?.session : null;
   if (isAuthedSession(session)) {
     const routeHash = h && ROUTE_NAMES[h] ? h : null;
