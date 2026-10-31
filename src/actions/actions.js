@@ -274,13 +274,19 @@ A.setPref = el => {
 /* ---------- popovers ---------- */
 A.pop = el => {
   const d = el.dataset;
-  if (d.closemodal) closeModal();
+  /* Client-modal meeting rows close the modal first; capture the trigger
+     rect pre-render so openPop still anchors to the row. */
+  let rect;
+  if (d.closemodal) {
+    rect = el.getBoundingClientRect();
+    closeModal();
+  }
   const p = S.ui.pop;
   if (p && p.type === d.pop && p.id === d.id && p.key === d.key && p.i == (d.i != null ? +d.i : undefined) && p.field === d.field) {
     closePop();
     return;
   }
-  openPop(el);
+  openPop(el, rect ? { rect } : {});
 };
 A.ctxBtn = el => {
   const r = el.getBoundingClientRect();
@@ -401,8 +407,10 @@ A.openTask = el => {
     toast("You don't have access to that task", { kind: 'err' });
     return;
   }
+  /* Capture the opener key BEFORE closeModal()'s render detaches el. */
+  const opener = el.isConnected ? focusKey(el) : S.ui.drawerOpener;
   closeModal();
-  if (!S.ui.drawer || !document.activeElement?.closest?.('.drawer')) S.ui.drawerOpener = el.isConnected ? focusKey(el) : S.ui.drawerOpener;
+  if (!S.ui.drawer || !document.activeElement?.closest?.('.drawer')) S.ui.drawerOpener = opener;
   S.ui.drawer = id;
   S.ui.drawerFull = S.prefs.openTasks === 'full' || (S.ui.drawerFull && S.ui.drawer === id);
   S.ui.pop = null;

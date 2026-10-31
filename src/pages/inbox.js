@@ -367,10 +367,10 @@ function gmailPreview(m) {
       <button class="ibtn ibtn-sm" data-a="gsel" data-id="" aria-label="Back">${ic('arrow-left', 15)}</button>
       <span class="av sm" style="--c:var(--red)" aria-hidden="true">${ic('mail', 12)}</span><span class="muted" style="font-size:12.5px">Gmail</span><span class="sp"></span>
       ${msg ? gmsgActions(msg) : ''}
-      ${m.gone ? `<div class="alert" style="margin:0 0 12px">${ic('triangle-alert', 15)}<span>This linked message is no longer available in Gmail — it may have been deleted.</span></div>` : ''}
       ${link ? `<a class="btn btn-sm btn-secondary" href="${esc(link)}" target="_blank" rel="noopener noreferrer" aria-label="Open in Gmail">${ic('mail-open', 14)}</a>` : ''}
     </div>
     <div style="padding:20px 28px;max-width:760px;width:100%">
+      ${m.gone ? `<div class="alert" style="margin:0 0 14px">${ic('triangle-alert', 15)}<span>This linked message is no longer available in Gmail — it may have been deleted.</span></div>` : ''}
       <h2 style="font-size:var(--fs-xl);margin:0 0 10px;font-weight:600;letter-spacing:-.015em">${esc(m.subject)}</h2>
       <div class="row" style="gap:10px;margin-bottom:14px;font-size:13px">${m.unread ? '<span class="badge accent">Unread</span>' : ''}<b style="font-weight:500">${esc(m.from)}</b>${m.email ? `<span class="muted">&lt;${esc(m.email)}&gt;</span>` : ''}<span class="sp"></span><span class="muted" style="font-size:12.5px">${d ? esc(d.toLocaleString()) : ''}</span></div>
       ${badgeRow ? `<div class="row" style="gap:4px;margin:-6px 0 12px;flex-wrap:wrap">${badgeRow}</div>` : ''}

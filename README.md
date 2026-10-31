@@ -102,6 +102,21 @@ Dependencies point downward:
 - **Icons:** call `ic('name')` with any [Lucide](https://lucide.dev) icon name. The
   `virtual:icons` plugin bundles only the icons the source uses.
 
+## Google integration notes
+
+Atrium connects to one Google account per signed-in user (Gmail read/send/modify
+
+- Calendar read/write, granted via Settings → Integrations). Two model notes:
+
+* **CRM links are workspace-shared.** `links[]` rows (client ↔ mail/event/task)
+  live in the shared workspace document, while each member reads their own
+  Gmail — Gmail message ids are global, so on a multi-member workspace the same
+  message can only be linked to one client workspace-wide. Atrium is currently
+  single-user; revisit per-account link scoping before inviting members.
+* **Mail HTML is rendered, not trusted.** Message bodies pass through
+  DOMPurify (`src/core/sanitize.js`) — the only door for Gmail HTML into the
+  DOM. Everything else (senders, subjects, snippets, label names) is escaped.
+
 ## Continuous integration
 
 Every push and pull request runs lint, the format check and a production build

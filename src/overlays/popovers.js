@@ -13,7 +13,9 @@ import { eventDateKey, eventTimeLabel, eventTimeRange, safeLink } from '../../su
 import { ctxMenu } from './context-menu.js';
 
 export function openPop(el, extra = {}) {
-  const r = el.getBoundingClientRect();
+  /* extra.rect: callers that close a modal first (render detaches el) pass
+     the pre-close rect so the popover still anchors to the real trigger. */
+  const r = extra.rect || el.getBoundingClientRect();
   const d = el.dataset;
   S.ui.popOpener = focusKey(el);
   S.ui.pop = {
