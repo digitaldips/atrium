@@ -632,6 +632,15 @@
   border-style: dashed;
   color: var(--text-3);
 }
+/* AC2: the one-click auto-link confirm badge — reads as actionable. */
+.lblbadge.sug {
+  cursor: pointer;
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+.lblbadge.sug:hover {
+  border-color: var(--accent);
+}
 .pillbtn {
   display: inline-flex;
   align-items: center;

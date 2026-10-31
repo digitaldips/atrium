@@ -93,6 +93,9 @@ A.removeClient = el => {
         mutate(() => {
           D().deals = D().deals.filter(d => d.client !== c.id);
           D().clients = D().clients.filter(x => x !== c);
+          /* CRM linkage: a removed client takes its links[] rows with it —
+             no dangling clientIds. */
+          D().links = (D().links || []).filter(l => l.clientId !== c.id);
           crmAct('removed client', `“${c.name}”`);
         })
       ) {

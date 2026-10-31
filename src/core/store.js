@@ -3,6 +3,7 @@ import { TODAY, diffD, iso, parse, uid } from './utils.js';
 import { PCOLORS, TEAMS_SEED } from './constants.js';
 import { seed } from '../data/seed.js';
 import { ensureCrmData } from './crm.js';
+import { ensureDocShape } from './links.js';
 import { sb, getCurrentUser, setCurrentUser } from './supabase.js';
 import { ensureGooglePrefs } from '../../supabase/functions/_shared/google-pure.js';
 import {
@@ -150,6 +151,7 @@ export function save() {
 export function bindCacheToUser(userId) {
   if (isTrustedCache(saved, userId)) {
     ensureCrmData(S.data);
+    ensureDocShape(S.data); // links[] (CRM linkage) — zero-loss, same contract
     ensureGooglePrefs(S.prefs);
     return true;
   }
@@ -192,6 +194,7 @@ export async function hydrateWorkspace(session) {
       S.prefs = { ...DEFAULT_PREFS };
       applyUserIdentity(S, session.user);
       ensureCrmData(S.data);
+      ensureDocShape(S.data);
       ensureGooglePrefs(S.prefs);
       await upsertWorkspaceDoc(sb, session.user.id, buildDocPayload(S.data, S.prefs, S.views), D().ws?.name);
       save();
@@ -204,8 +207,10 @@ export async function hydrateWorkspace(session) {
     /* CRM migration: docs created before the CRM feature lack clients/deals.
        ensureCrmData only fills missing arrays — existing content is untouched
        (zero-loss), and save() below persists the initialized doc. Same
-       pattern for prefs.calendarIds (multi-calendar feature). */
+       pattern for prefs.calendarIds (multi-calendar feature) and links[]
+       (CRM linkage: mail/event/task rows). */
     ensureCrmData(S.data);
+    ensureDocShape(S.data);
     ensureGooglePrefs(S.prefs);
     save();
     return 'loaded';
@@ -258,6 +263,7 @@ export const commentsOf = tid => D().comments.filter(c => c.task === tid);
 /* ---------- CRM lookups (arrays exist after ensureCrmData; || [] is belt-and-braces) ---------- */
 export const crmClients = () => D().clients || [];
 export const crmDeals = () => D().deals || [];
+export const crmLinks = () => D().links || [];
 export const client = id => crmClients().find(c => c.id === id);
 export const deal = id => crmDeals().find(d => d.id === id);
 export function progressOf(pid) {

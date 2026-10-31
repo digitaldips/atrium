@@ -2,7 +2,7 @@
 import { $$, MOD, ago, esc, fmtDate } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { PCOLORS, PICONS } from '../core/constants.js';
-import { D, S, mem, pColor, proj, task, teamsList } from '../core/store.js';
+import { D, S, client, mem, pColor, proj, task, teamsList } from '../core/store.js';
 import { FT, av, filePrev, lbl, prPill, stPill } from '../ui/helpers.js';
 import { focusKey, render } from '../shell/render.js';
 import { teamModal } from '../features/teams.js';
@@ -82,6 +82,7 @@ export function taskModal(m, H) {
   <form class="modal-b" data-submit="submitTask" style="gap:12px">
     <div class="field"><label class="sr" for="f-title">Task name</label><input class="input input-lg ${err ? 'is-error' : ''}" id="f-title" data-in="form" data-f="title" value="${esc(f.title)}" placeholder="Task name" autofocus aria-invalid="${!!err}" aria-describedby="f-title-err" style="font-size:15px;font-weight:500">${err ? `<span class="err" id="f-title-err">${ic('circle-alert', 12)}${err}</span>` : ''}</div>
     <div class="field"><label class="sr" for="f-desc">Description</label><textarea class="textarea" id="f-desc" data-in="form" data-f="desc" placeholder="Add a description… (optional)" rows="3">${esc(f.desc)}</textarea></div>
+    ${!m.edit && (f.gmail || f.linkClient) ? `<div class="hint">${ic('mail', 12)} From Gmail${f.gmail?.subject ? ` · “${esc(f.gmail.subject)}”` : ''}${f.linkClient && client(f.linkClient) ? ` — will be linked to ${esc(client(f.linkClient).name)}` : ''}</div>` : ''}
     <div class="row" style="flex-wrap:wrap;gap:6px">
       ${formChip('project', `<span class="pdot" style="--c:${pColor(p)}"></span>${esc(p?.name || 'Project')}`, 'Project')}
       ${formChip('status', stPill(f.status), 'Status')}
@@ -366,6 +367,7 @@ export function gEventModal(m, H) {
   return `${H(editing ? 'Edit event' : 'New event', editing ? 'Changes are saved to your Google Calendar and attendees are notified.' : 'Saved to your Google Calendar — attendees receive an invitation.')}
   <form class="modal-b" data-submit="gEvSubmit" style="gap:10px">
     <div class="field"><label class="label" for="g-ev-title">Title</label><input class="input" id="g-ev-title" data-in="gEvForm" data-f="title" value="${esc(f.title)}" placeholder="Event title" autofocus></div>
+    ${f.taskLink ? `<div class="hint">${ic('calendar-check', 12)} From Atrium task${task(f.taskLink.taskId) ? ` ${esc(task(f.taskLink.taskId).key)}` : ''} — “${esc(f.taskLink.taskTitle)}”. The event links back to the task when created.</div>` : ''}
     <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-start">
       <div class="field" style="flex:1;min-width:150px"><label class="label" for="g-ev-date">Date</label><input type="date" class="input" id="g-ev-date" data-in="gEvForm" data-f="date" value="${esc(f.date)}">${busyStrip(f)}</div>
       ${calField}

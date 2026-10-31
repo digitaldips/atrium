@@ -2,7 +2,8 @@
 import { $, MOD, MONL, TODAY, WD, addD, dOff, diffD, esc, fmtDate, iso, parse } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
 import { LABELS, PRIOS, PSTAT, STATUSES } from '../core/constants.js';
-import { D, S, allTasks, canSee, me, mem, pColor, proj, task, visibleProjects } from '../core/store.js';
+import { D, S, allTasks, canSee, crmClients, crmLinks, me, mem, pColor, proj, task, visibleProjects } from '../core/store.js';
+import { findLink } from '../core/links.js';
 import { av, avStack, prIcon, stIcon } from '../ui/helpers.js';
 import { focusKey, render } from '../shell/render.js';
 import { FIELDS, viewOf } from '../shell/view-engine.js';
@@ -18,6 +19,7 @@ export function openPop(el, extra = {}) {
   S.ui.pop = {
     type: d.pop,
     id: d.id,
+    kind: d.kind,
     key: d.key,
     i: d.i != null ? +d.i : undefined,
     field: d.field,
@@ -350,6 +352,29 @@ export function popHtml(p) {
       style = 'width:280px';
       break;
     }
+    case 'linkclient': {
+      /* AC2: searchable client picker for manual linking. The popover
+         carries kind ('mail'|'event') + ref on S.ui.pop; picking calls
+         A.linkPick which writes the row from the LIVE object. The
+         currently linked client (if any) is pre-checked. */
+      const cur = findLink(crmLinks(), p.kind, p.id);
+      inner =
+        `<div class="mh">Link to client</div>` +
+        (crmClients().length
+          ? popList(
+              crmClients().map(c => ({
+                id: c.id,
+                name: c.name + (c.company ? ` — ${c.company}` : ''),
+                html: `<span class="pdot" style="--c:var(--blue)"></span>`,
+                on: cur?.clientId === c.id,
+                act: 'linkPick',
+              })),
+              { search: 'Search clients…' },
+            )
+          : `<div class="mi faint" style="cursor:default">No clients yet — add one on the Clients page.</div>`);
+      style = 'width:280px';
+      break;
+    }
     case 'event': {
       const e = D().events.find(x => x.id === p.id);
       const pr = proj(e.project);
@@ -374,6 +399,13 @@ export function popHtml(p) {
         (safeGcalLink
           ? `<div class="msep"></div><a class="mi" href="${esc(safeGcalLink)}" target="_blank" rel="noopener noreferrer">${ic('arrow-up-right', 14)}Open in Google Calendar</a>`
           : '');
+      /* AC2: client linkage on the event popover — linked client named,
+         Unlink when linked, otherwise the searchable picker. */
+      const evLink = findLink(crmLinks(), 'event', g.id);
+      const evClient = evLink ? crmClients().find(c => c.id === evLink.clientId) : null;
+      inner += evLink
+        ? `<div class="msep"></div><div class="mi faint" style="cursor:default">${ic('user', 13)}<span class="trunc">Linked to ${esc(evClient?.name || 'a client')}</span></div><button class="mi" data-a="linkRemove" data-kind="event" data-id="${esc(g.id)}">${ic('unlink', 14)}Unlink</button>`
+        : `<div class="msep"></div><button class="mi" data-a="pop" data-pop="linkclient" data-kind="event" data-id="${esc(g.id)}">${ic('user-plus', 14)}Link to client…</button>`;
       style = 'width:270px';
       break;
     }

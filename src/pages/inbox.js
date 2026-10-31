@@ -1,7 +1,8 @@
 /* ---------- INBOX ---------- */
 import { MOD, ago, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { D, S, commentsOf, mem, pColor, proj, task } from '../core/store.js';
+import { D, S, client, commentsOf, crmClients, crmLinks, mem, pColor, proj, task } from '../core/store.js';
+import { findLink, mailSuggestion } from '../core/links.js';
 import { googleStatus, ensureGmail, ensureGmailLabels, ensureGmailDrafts } from '../core/google.js';
 import { mergeInbox, safeLink, bulkSelectionWarning } from '../../supabase/functions/_shared/google-pure.js';
 import { av, empty, fmtComment, fsize } from '../ui/helpers.js';
@@ -38,7 +39,12 @@ export function pageInbox() {
      category keeps its dedicated list below. */
   const rows = gcat ? null : mergeInbox(notifs, gmsgs, { cat, unreadOnly: S.ui.inboxUnread });
   const sel = D().notifs.find(n => n.id === S.ui.inboxSel) || null;
-  const gsel = gmsgs.find(m => m.id === S.ui.gsel) || null;
+  /* The selected gmail row normally comes from the fetched list; a message
+     opened by click-through (task drawer / client detail) may only exist in
+     the deep-read cache — that cache carries the same header fields, so
+     the preview still renders honestly instead of showing a blank pane. */
+  const gsel =
+    gmsgs.find(m => m.id === S.ui.gsel) || (S.ui.gmsg && S.ui.gmsg[S.ui.gsel] && S.ui.gmsg[S.ui.gsel].state === 'ok' ? S.ui.gmsg[S.ui.gsel].msg : null);
   return `<div class="page flush">
     <div style="display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr);flex:1;min-height:0" class="inbox-grid">
       <style>@media(max-width:900px){.inbox-grid{grid-template-columns:minmax(0,1fr)!important}.inbox-prev{display:${sel || gsel ? 'flex' : 'none'}!important;position:fixed;inset:0;z-index:48;background:var(--surface)}}</style>
@@ -191,8 +197,25 @@ function gmailDraftsList() {
    bar lives there); the star works everywhere (All view included).
    Nested [data-a] targets dispatch their own action — the checkbox never
    opens the message. */
+/* ---------- CRM linkage badges (AC2/AC6): linked client, or the one-click
+   confirm badge for an exact-address auto-link suggestion. Rendered on
+   every gmail row (merged 'all' stream + gmail category + search). ---------- */
+function crmBadges(m) {
+  const links = crmLinks();
+  const link = findLink(links, 'mail', m.id);
+  if (link) {
+    const c = client(link.clientId);
+    return c ? `<span class="lblbadge" title="Linked client">${ic('user', 11)}${esc(c.name)}</span>` : '';
+  }
+  const sug = mailSuggestion(links, crmClients(), m);
+  return sug && sug.client
+    ? `<button type="button" class="lblbadge sug" data-a="gLinkConfirm" data-id="${esc(m.id)}" data-tip="Matches ${esc(sug.matchedEmail)} on client email — click to link" aria-label="Link to ${esc(sug.client.name)}">${ic('user-plus', 11)}Link to ${esc(sug.client.name)}</button>`
+    : '';
+}
+
 function gmailItem(m, on, opt = {}) {
   const selected = S.ui.gselSet ? S.ui.gselSet.has(m.id) : false;
+  const crm = crmBadges(m);
   const names = (S.ui.glabels && S.ui.glabels.items) || [];
   const nameOf = id => {
     const l = names.find(x => x.id === id);
@@ -214,7 +237,7 @@ function gmailItem(m, on, opt = {}) {
       <div class="row" style="gap:8px"><span class="trunc" style="${m.unread ? 'font-weight:600' : ''}">${esc(m.from)}</span><span class="sp"></span><span class="faint" style="font-size:11.5px;flex-shrink:0">${m.date ? ago(m.date) : ''}</span></div>
       <div class="trunc" style="margin-top:1px;${m.unread ? 'font-weight:600' : ''}">${esc(m.subject)}</div>
       <div class="trunc muted" style="font-size:12.5px;margin-top:2px">${esc(m.snippet)}</div>
-      ${badges ? `<div class="row" style="gap:4px;margin-top:5px;flex-wrap:wrap">${badges}</div>` : ''}
+      ${badges || crm ? `<div class="row" style="gap:4px;margin-top:5px;flex-wrap:wrap">${badges}${crm}</div>` : ''}
     </div>
   </div>`;
 }
@@ -290,6 +313,23 @@ function gmsgCard(m, open) {
     ${open ? `${attachRow(m)}${mailBody(m)}` : ''}
   </div>`;
 }
+/* AC2/AC4: the message view's CRM row — linked client (+ Unlink), or the
+   searchable 'Link to client…' picker plus the one-click confirm badge for
+   an exact-address auto-link suggestion, and the mail → task bridge. */
+function gmsgCrmRow(m) {
+  const links = crmLinks();
+  const link = findLink(links, 'mail', m.id);
+  const linkClient = link ? client(link.clientId) : null;
+  const sug = link ? null : mailSuggestion(links, crmClients(), m);
+  return `<div class="row" style="gap:8px;margin:-4px 0 12px;flex-wrap:wrap;align-items:center">
+    ${linkClient ? `<span class="lblbadge" title="Linked client">${ic('user', 12)}${esc(linkClient.name)}</span>` : ''}
+    ${linkClient ? `<button class="btn btn-ghost btn-sm" data-a="linkRemove" data-kind="mail" data-id="${esc(m.id)}">${ic('unlink', 13)}Unlink</button>` : `<button class="btn btn-secondary btn-sm" data-a="pop" data-pop="linkclient" data-kind="mail" data-id="${esc(m.id)}">${ic('user-plus', 13)}Link to client…</button>`}
+    ${sug && sug.client ? `<button class="btn btn-secondary btn-sm" data-a="gLinkConfirm" data-id="${esc(m.id)}" data-tip="Matches ${esc(sug.matchedEmail)} on client email">${ic('circle-check', 13)}Link to ${esc(sug.client.name)}<span class="faint" style="font-size:11px">· matches ${esc(sug.matchedEmail)}</span></button>` : ''}
+    <span class="sp"></span>
+    <button class="btn btn-secondary btn-sm" data-a="gAddTask" data-id="${esc(m.id)}">${ic('list-plus', 13)}Add task</button>
+  </div>`;
+}
+
 function gmailPreview(m) {
   const deep = (S.ui.gmsg = S.ui.gmsg || {})[m.id];
   const msg = deep && deep.msg;
@@ -331,6 +371,7 @@ function gmailPreview(m) {
       <h2 style="font-size:var(--fs-xl);margin:0 0 10px;font-weight:600;letter-spacing:-.015em">${esc(m.subject)}</h2>
       <div class="row" style="gap:10px;margin-bottom:14px;font-size:13px">${m.unread ? '<span class="badge accent">Unread</span>' : ''}<b style="font-weight:500">${esc(m.from)}</b>${m.email ? `<span class="muted">&lt;${esc(m.email)}&gt;</span>` : ''}<span class="sp"></span><span class="muted" style="font-size:12.5px">${d ? esc(d.toLocaleString()) : ''}</span></div>
       ${badgeRow ? `<div class="row" style="gap:4px;margin:-6px 0 12px;flex-wrap:wrap">${badgeRow}</div>` : ''}
+      ${msg ? gmsgCrmRow(m) : ''}
       ${msg && msg.to ? `<div class="row faint" style="font-size:12px;margin-bottom:12px">to ${esc(msg.to)}</div>` : ''}
       ${bodyArea}
       <p class="faint" style="font-size:12px;margin-top:18px">Replies, archiving and trash act on this message in your Gmail. Attachments download straight from your account.</p>

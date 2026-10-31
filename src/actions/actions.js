@@ -11,6 +11,7 @@ import {
   STORE_KEY,
   allTasks,
   canSee,
+  client,
   commentsOf,
   logAct,
   me,
@@ -22,6 +23,7 @@ import {
   tasksOf,
   visibleProjects,
 } from '../core/store.js';
+import { makeLinkRow, upsertLink } from '../core/links.js';
 import { sb, getCurrentUser, setCurrentUser } from '../core/supabase.js';
 import { buildDocPayload, markSyncFailure, pushDocUpdate, signInWithGoogle, signOutUser, upsertWorkspaceDoc } from '../core/workspace-api.js';
 import { fileType, fsize } from '../ui/helpers.js';
@@ -668,11 +670,22 @@ A.submitTask = () => {
     !mutate(() => {
       t = createTask({ ...base, desc: f.desc ? `<p>${esc(f.desc)}</p>` : '', attachments: files });
       files.forEach(x => D().files.unshift({ ...x, project: t.project, task: t.id }));
+      /* AC4 bridge: a task created from a Gmail message stores the
+         denormalized convenience ref (task.gmail = { id, webLink, subject })
+         and — when the message is/was linked to a client — the task's
+         links[] row. The links[] row is the source of truth. */
+      if (f.gmail && f.gmail.id) t.gmail = { id: f.gmail.id, webLink: f.gmail.webLink || '', subject: f.gmail.subject || '' };
+      if (f.linkClient && client(f.linkClient)) {
+        D().links = upsertLink(
+          D().links,
+          makeLinkRow({ id: uid('lk'), clientId: f.linkClient, kind: 'task', ref: t.id, title: t.title, when: Date.now(), snippet: '' }),
+        );
+      }
     })
   )
     return;
   if (f.more) {
-    Object.assign(f, { title: '', desc: '', subtasks: [], files: [] });
+    Object.assign(f, { title: '', desc: '', subtasks: [], files: [], gmail: null, linkClient: null });
     render();
     setTimeout(() => $('#f-title')?.focus(), 0);
     toast(`Created ${t.key}`, { ms: 2000 });

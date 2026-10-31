@@ -56,6 +56,8 @@ export function taskRow(t, cols, tpl, opt = {}) {
       ${t.subtasks.length ? `<span class="ibtn ibtn-xs" data-a="expandRow" data-id="${t.id}" aria-label="${open ? 'Hide' : 'Show'} subtasks" aria-expanded="${!!open}" style="margin-left:-4px">${ic(open ? 'chevron-down' : 'chevron-right', 13)}</span>` : '<span style="width:18px;flex-shrink:0"></span>'}
       <span class="key">${t.key}</span>
       ${editing ? `<input class="inline-in" id="edit-title" data-in="noop" data-blur="commitTitle" data-key-enter="commitTitle" data-id="${t.id}" value="${esc(t.title)}" aria-label="Task title">` : `<span class="tt">${esc(t.title)}</span>`}
+      ${t.gmail ? `<button type="button" class="meta-mini" data-a="gOpenMail" data-id="${esc(t.gmail.id)}" data-tip="Linked mail: ${esc(t.gmail.subject || 'Gmail message')}" aria-label="Open linked Gmail message">${ic('mail', 11)}</button>` : ''}
+      ${t.event ? `<button type="button" class="meta-mini" data-a="pop" data-pop="gevent" data-id="${esc(t.event.id)}" data-tip="Linked meeting: ${esc(t.event.summary || 'Google event')}" aria-label="Open linked Google event">${ic('calendar-days', 11)}</button>` : ''}
       ${t.recur ? `<span class="meta-mini" data-tip="Repeats ${t.recur.toLowerCase()}">${ic('repeat', 11)}</span>` : ''}
       ${t.subtasks.length ? `<span class="meta-mini">${ic('list-checks', 11)}${sd}/${t.subtasks.length}</span>` : ''}
       ${cc ? `<span class="meta-mini">${ic('message-square', 11)}${cc}</span>` : ''}

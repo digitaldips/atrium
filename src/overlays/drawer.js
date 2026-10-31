@@ -27,6 +27,20 @@ export function renderLayer() {
 }
 
 /* ---------------- TASK DRAWER ---------------- */
+
+/* AC5/AC6: under the title — click-through chips for the task's Gmail
+   message / Google event refs, plus the two bridges (Email about this,
+   Schedule meeting). The bridges guard on the live Google connection with
+   an honest toast; the chips are plain cross-refs. */
+function drawerBridges(t) {
+  return `<div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap">
+    ${t.gmail ? `<button class="pillbtn" data-a="gOpenMail" data-id="${esc(t.gmail.id)}" data-tip="Open the linked Gmail message" aria-label="Open linked Gmail message">${ic('mail', 13)}<span class="trunc" style="max-width:220px">Re: ${esc(t.gmail.subject || 'message')}</span></button>` : ''}
+    ${t.event ? `<button class="pillbtn" data-a="pop" data-pop="gevent" data-id="${esc(t.event.id)}" data-tip="Open the linked Google event" aria-label="Open linked Google event">${ic('calendar-days', 13)}<span class="trunc" style="max-width:220px">${esc(t.event.summary || 'event')}</span></button>` : ''}
+    <button class="pillbtn" data-a="gTaskEmail" data-id="${t.id}" data-tip="Draft an email about this task" aria-label="Email about this task">${ic('mail', 13)}Email about this</button>
+    <button class="pillbtn" data-a="gTaskSchedule" data-id="${t.id}" data-tip="Schedule a Google meeting for this task" aria-label="Schedule a meeting for this task">${ic('calendar-days', 13)}Schedule meeting</button>
+  </div>`;
+}
+
 export function drawerHtml(t) {
   const p = proj(t.project);
   const u = S.ui;
@@ -63,6 +77,7 @@ export function drawerHtml(t) {
         : `
       ${t.status === 'done' ? `<div class="alert ok" style="margin-bottom:12px">${ic('circle-check', 15)}<span>Completed ${t.completedAt ? ago(t.completedAt) : ''}. <button class="link" data-a="toggleDone" data-id="${t.id}">Reopen task</button></span></div>` : isOver(t) ? `<div class="alert danger" style="margin-bottom:12px">${ic('clock-alert', 15)}<span>Overdue by ${-diffD(parse(t.due), TODAY)} day${-diffD(parse(t.due), TODAY) > 1 ? 's' : ''}. <button class="link" data-a="pop" data-pop="date" data-field="due" data-id="${t.id}">Reschedule</button></span></div>` : ''}
       <textarea class="ttl-edit" id="d-title" rows="1" data-autosize data-blur="commitDrawerTitle" data-key-enter="blur" data-id="${t.id}" aria-label="Task title">${esc(t.title)}</textarea>
+      ${drawerBridges(t)}
       <dl class="kv" style="margin-top:12px;${u.drawerFull ? 'grid-template-columns:112px minmax(0,1fr) 112px minmax(0,1fr)' : ''}">
         ${prop('circle-dot', 'Status', cellStatus(t))}
         ${prop('signal-high', 'Priority', cellPrio(t))}

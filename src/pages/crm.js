@@ -1,9 +1,11 @@
 /* ---------- CRM · Clients (route: crm) + shared CRM summary ---------- */
 import { esc, fmtDate } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { S, client, crmClients, crmDeals } from '../core/store.js';
+import { D, S, client, crmClients, crmDeals, crmLinks } from '../core/store.js';
+import { linksForClient } from '../core/links.js';
 import { CLIENT_STATUSES, CSTATUS, CRM_STAGE, activeClientCount, dealTotals, eur, isKnownStage } from '../core/crm.js';
-import { empty } from '../ui/helpers.js';
+import { ST } from '../core/constants.js';
+import { empty, stIcon } from '../ui/helpers.js';
 
 /* ---------- presentation vocabulary ---------- */
 export const CSTATUS_C = { lead: 'var(--blue)', active: 'var(--green)', inactive: 'var(--gray)' };
@@ -76,6 +78,61 @@ export function pageCrm() {
   </div>`;
 }
 
+/* ---------- AC3: client detail linkage (Mail / Meetings / Tasks) ---------- */
+/* Newest-first from the links[] rows; every row carries its own Unlink.
+   Mail senders come from the cached Gmail copies when available — the
+   stored row (title/when/snippet) is the fallback, so nothing renders
+   empty when the message is not in this session's caches. */
+function clientLinkSections(c) {
+  const links = crmLinks();
+  const mail = linksForClient(links, c.id, 'mail');
+  const meetings = linksForClient(links, c.id, 'event');
+  const tasks = linksForClient(links, c.id, 'task');
+  const msgOf = ref =>
+    (S.ui.gmsgs || []).find(m => m && m.id === ref) ||
+    ((S.ui.gSearch && S.ui.gSearch.msgs) || []).find(m => m && m.id === ref) ||
+    (S.ui.gmsg && S.ui.gmsg[ref] && S.ui.gmsg[ref].state === 'ok' ? S.ui.gmsg[ref].msg : null) ||
+    null;
+  const mailRows = mail.length
+    ? mail
+        .map(l => {
+          const m = msgOf(l.ref);
+          const line = [m?.from || '', l.snippet || ''].filter(Boolean).join(' · ') || 'Open in Gmail';
+          return `<div class="mini" role="button" tabindex="0" data-a="gOpenMail" data-id="${esc(l.ref)}"><span class="ftype" style="--c:var(--red)">${ic('mail', 14)}</span><div class="grow" style="min-width:0"><div style="font-weight:500;font-size:13px">${esc(l.title || '(no subject)')}</div><div class="faint" style="font-size:11.5px"><span class="trunc" style="display:inline-block;max-width:100%">${esc(line)}</span></div></div><span class="faint num" style="font-size:11.5px;flex-shrink:0">${l.when ? fmtDate(new Date(l.when)) : ''}</span><button class="ibtn ibtn-xs x" data-a="linkRemove" data-kind="mail" data-id="${esc(l.ref)}" aria-label="Unlink mail">${ic('x', 12)}</button></div>`;
+        })
+        .join('')
+    : `<div class="faint" style="font-size:12.5px">No linked mail yet — link a message from the inbox.</div>`;
+  const meetingRows = meetings.length
+    ? meetings
+        .map(
+          l =>
+            `<div class="mini" role="button" tabindex="0" data-a="pop" data-pop="gevent" data-id="${esc(l.ref)}"><span class="ftype" style="--c:#1A73E8">${ic('calendar-days', 14)}</span><div class="grow" style="min-width:0"><div style="font-weight:500;font-size:13px">${esc(l.title || '(untitled event)')}</div></div><span class="faint num" style="font-size:11.5px;flex-shrink:0">${l.when ? fmtDate(new Date(l.when)) : ''}</span><button class="ibtn ibtn-xs x" data-a="linkRemove" data-kind="event" data-id="${esc(l.ref)}" aria-label="Unlink meeting">${ic('x', 12)}</button></div>`,
+        )
+        .join('')
+    : `<div class="faint" style="font-size:12.5px">No linked meetings yet — link an event from its popover.</div>`;
+  const taskRows = tasks.length
+    ? tasks
+        .map(l => {
+          const t = D().tasks.find(x => x && x.id === l.ref);
+          return `<div class="mini" role="button" tabindex="0" data-a="openTask" data-id="${esc(l.ref)}">${stIcon(t ? t.status : 'todo', 13)}<div class="grow" style="min-width:0"><div style="font-weight:500;font-size:13px${t ? '' : ';color:var(--text-3)'}">${esc(t ? l.title || t.title : l.title || 'Removed task')}</div></div><span class="faint" style="font-size:11.5px;flex-shrink:0">${t ? esc(ST[t.status]?.name || t.status) : 'removed'}</span><button class="ibtn ibtn-xs x" data-a="linkRemove" data-kind="task" data-id="${esc(l.ref)}" aria-label="Unlink task">${ic('x', 12)}</button></div>`;
+        })
+        .join('')
+    : `<div class="faint" style="font-size:12.5px">No linked tasks yet — link one from a message or its drawer.</div>`;
+  return `
+    <div>
+      <div class="eyebrow" style="margin-bottom:6px">Mail · ${mail.length}</div>
+      ${mailRows}
+    </div>
+    <div>
+      <div class="eyebrow" style="margin-bottom:6px">Meetings · ${meetings.length}</div>
+      ${meetingRows}
+    </div>
+    <div>
+      <div class="eyebrow" style="margin-bottom:6px">Tasks · ${tasks.length}</div>
+      ${taskRows}
+    </div>`;
+}
+
 /* ---------- client detail modal ---------- */
 export function clientDetailHtml(m, H) {
   const c = client(m.id);
@@ -108,6 +165,7 @@ export function clientDetailHtml(m, H) {
           : `<div class="faint" style="font-size:12.5px">No deals yet for this client.</div>`
       }
     </div>
+    ${clientLinkSections(c)}
   </div>
   <div class="modal-f"><button class="btn btn-ghost" data-a="openPipeline">${ic('briefcase', 14)}Pipeline</button><span class="sp"></span><button class="btn btn-secondary" data-a="removeClient" data-id="${c.id}">${ic('trash-2', 14)}Remove</button><button class="btn btn-primary" data-a="editClient" data-id="${c.id}">Edit client</button></div>`;
 }

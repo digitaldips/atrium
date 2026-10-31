@@ -1,7 +1,8 @@
 /* ---------- GOOGLE INTEGRATION actions ---------- */
 import { A, IN, KEY, confirmDlg } from './actions.js';
-import { $, esc, iso, addD, parse } from '../core/utils.js';
-import { S } from '../core/store.js';
+import { $, esc, iso, addD, parse, uid } from '../core/utils.js';
+import { D, S, task } from '../core/store.js';
+import { linkedClientIdForTask, makeLinkRow, upsertLink } from '../core/links.js';
 import { render } from '../shell/render.js';
 import { toast, mutate } from '../ui/toast.js';
 import { openModal, closeModal } from '../overlays/modals.js';
@@ -550,7 +551,7 @@ A.gDraftDelete = el => {
 };
 
 /* ---------- Google Calendar CRUD ---------- */
-function gEvForm(mode, ev, date) {
+export function gEvForm(mode, ev, date) {
   const allDay = ev ? !!ev.start?.date : true;
   const dateKey = ev ? eventDateKey(ev) : date;
   const timed = ev && ev.start?.dateTime;
@@ -655,8 +656,29 @@ A.gEvSubmit = async () => {
   f.error = null;
   render();
   try {
-    if (f.mode === 'edit') await updateGEvent(f.id, payload);
-    else await createGEvent(payload);
+    let ev;
+    if (f.mode === 'edit') ev = await updateGEvent(f.id, payload);
+    else ev = await createGEvent(payload);
+    /* AC5 bridge: a meeting created FROM a task writes back the task's
+       convenience ref (task.event = { id, summary }) and — when the task
+       is linked to a client — the links[] row for the event. The id stored
+       is the one Google returned (the same id the popover resolves). */
+    if (f.mode !== 'edit' && f.taskLink) {
+      const t = task(f.taskLink.taskId);
+      if (t && ev && ev.id) {
+        const startMs = ev.start?.dateTime ? Date.parse(ev.start.dateTime) : ev.start?.date ? Date.parse(`${ev.start.date}T00:00:00`) : Date.now();
+        mutate(() => {
+          t.event = { id: ev.id, summary: ev.summary || f.title };
+          const cid = linkedClientIdForTask(D().links, t.id);
+          if (cid) {
+            D().links = upsertLink(
+              D().links,
+              makeLinkRow({ id: uid('lk'), clientId: cid, kind: 'event', ref: ev.id, title: ev.summary || f.title, when: startMs, snippet: f.location || '' }),
+            );
+          }
+        });
+      }
+    }
     closeModal();
     toast(f.mode === 'edit' ? 'Event updated — attendees notified' : 'Event created — attendees notified');
     refetchCalendarWindow(currentCalWindow());

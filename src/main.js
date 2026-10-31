@@ -50,6 +50,7 @@ import './actions/actions.js';
 import './actions/crm.js';
 import './actions/events.js';
 import './actions/google.js';
+import './actions/linkage.js';
 import './actions/keyboard.js';
 import './actions/drag-drop.js';
 import './features/teams.js';

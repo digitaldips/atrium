@@ -509,6 +509,7 @@ export function seed() {
     members,
     clients: crmSeedClients(),
     deals: crmSeedDeals(),
+    links: [],
     projects,
     tasks: T,
     comments,
