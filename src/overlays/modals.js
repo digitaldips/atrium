@@ -7,6 +7,7 @@ import { FT, av, filePrev, lbl, prPill, stPill } from '../ui/helpers.js';
 import { focusKey, render } from '../shell/render.js';
 import { teamModal } from '../features/teams.js';
 import { clientDetailHtml, clientFormHtml, dealFormHtml } from '../pages/crm.js';
+import { resolveEnabledCalendars } from '../../supabase/functions/_shared/google-pure.js';
 
 export function openModal(m) {
   S.ui.modalOpeners = S.ui.modalOpeners || [];
@@ -300,10 +301,11 @@ export function filePreviewModal(m, H) {
   <div class="modal-f"><button class="btn btn-secondary" data-a="copyLink" data-fid="${f.id}">${ic('link', 14)}Copy link</button><span class="sp"></span><button class="btn btn-primary" data-a="closeModal">Close</button></div>`;
 }
 
-/* ---------- Gmail compose / reply (FULL client) ---------- */
+/* ---------- Gmail compose / reply (FULL client + drafts) ---------- */
 export function composeModal(m, H) {
   const f = S.ui.gform;
-  return `${H(m.reply ? 'Reply' : 'New message', 'Sent from your connected Gmail account.')}
+  const draftId = S.ui.compose?.draftId || '';
+  return `${H(m.reply ? 'Reply' : draftId ? 'Draft' : 'New message', draftId ? 'Saved as a Gmail draft — Send sends the draft, Save updates it.' : 'Sent from your connected Gmail account.')}
   <form class="modal-b" data-submit="gSend" style="gap:10px">
     <div class="field"><label class="label" for="g-to">To</label><input class="input" id="g-to" data-in="gForm" data-f="to" value="${esc(f.to)}" placeholder="name@company.com, another@company.com" autofocus></div>
     <div class="field"><label class="label" for="g-cc">Cc</label><input class="input" id="g-cc" data-in="gForm" data-f="cc" value="${esc(f.cc)}" placeholder="Optional"></div>
@@ -311,21 +313,63 @@ export function composeModal(m, H) {
     <div class="field grow"><label class="label" for="g-body">Message</label><textarea class="textarea" id="g-body" data-in="gForm" data-f="body" rows="9" placeholder="Write your message…">${esc(f.body)}</textarea></div>
     ${f.error ? `<div class="alert danger">${ic('triangle-alert', 14)}<span>${esc(f.error)}</span></div>` : ''}
   </form>
-  <div class="modal-f"><span class="faint hide-m" style="font-size:11.5px"><kbd>${MOD}</kbd> <kbd>↵</kbd></span><span class="sp"></span><button class="btn btn-secondary" data-a="closeModal">Cancel</button><button class="btn btn-primary" data-a="gSend" ${f.sending ? 'disabled aria-busy="true"' : ''}>${f.sending ? 'Sending…' : m.reply ? 'Send reply' : 'Send'}</button></div>`;
+  <div class="modal-f"><span class="faint hide-m" style="font-size:11.5px"><kbd>${MOD}</kbd> <kbd>↵</kbd></span><span class="sp"></span><button class="btn btn-secondary" data-a="gSaveDraft" ${f.saving ? 'disabled aria-busy="true"' : ''}>${ic('file', 14)}${draftId ? 'Update draft' : 'Save draft'}</button><button class="btn btn-secondary" data-a="closeModal">Cancel</button><button class="btn btn-primary" data-a="gSend" ${f.sending ? 'disabled aria-busy="true"' : ''}>${f.sending ? 'Sending…' : m.reply ? 'Send reply' : 'Send'}</button></div>`;
 }
 
 /* ---------- Google Calendar event create / edit (edit shares this modal) ---------- */
+
+/* Busy strip for the selected day (S.ui.gbusy, filled by ensureFreebusy):
+   merged busy blocks positioned across the local 00:00–24:00 line, plus
+   an honest empty state ("No busy blocks on this day") and a real error
+   state — the strip never invents availability. */
+function busyStrip(f) {
+  const st = S.ui.gbusy || { state: 'idle', day: null, blocks: [] };
+  if (!f.date || st.state === 'idle' || st.day !== f.date) return `<div class="faint" style="font-size:11.5px">Busy times load with the date…</div>`;
+  if (st.state === 'loading') return `<div class="row muted" style="font-size:12px" role="status">${ic('refresh-cw', 12)}Checking busy times…</div>`;
+  if (st.state === 'error')
+    return `<div class="alert danger" style="padding:8px 10px">${ic('triangle-alert', 13)}<span style="font-size:12px">${esc(st.error || 'Could not load busy times.')}</span></div>`;
+  if (st.state === 'empty') return `<div class="faint" style="font-size:12px">${ic('circle-check', 12)} No busy blocks on this day.</div>`;
+  const [y, m, d] = f.date.split('-').map(Number);
+  const dayStart = new Date(y, m - 1, d).getTime();
+  const dayMs = 86400e3;
+  const fmt = ms => {
+    const t = new Date(ms);
+    return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+  };
+  const bars = st.blocks
+    .map(
+      b =>
+        `<span aria-hidden="true" style="position:absolute;left:${Math.min(99.4, Math.max(0, ((b.s - dayStart) / dayMs) * 100)).toFixed(2)}%;width:${Math.max(0.6, Math.min(100, ((b.e - b.s) / dayMs) * 100)).toFixed(2)}%;top:0;bottom:0;background:var(--red);opacity:.35;border-radius:4px"></span>`,
+    )
+    .join('');
+  const list = st.blocks.map(b => `${fmt(b.s)} – ${fmt(b.e)}`).join(' · ');
+  return `<div style="margin-top:2px"><div style="position:relative;height:10px;background:var(--surface-2);border:1px solid var(--divider);border-radius:6px;overflow:hidden" aria-label="Busy times">${bars}</div><div class="faint" style="font-size:11.5px;margin-top:4px">${ic('clock', 11)} Busy: ${esc(list)}</div></div>`;
+}
+
 export function gEventModal(m, H) {
   const f = S.ui.gEvForm;
   const editing = f.mode === 'edit';
+  /* Writable ENABLED calendars only — the endpoint re-validates against
+     the calendarList (unknown / read-only → honest 400/403). */
+  const calItems = (S.ui.gcalList && S.ui.gcalList.items) || [];
+  const enabled = resolveEnabledCalendars(Array.isArray(S.prefs.calendarIds) ? S.prefs.calendarIds : ['primary'], calItems);
+  const writable = calItems.filter(c => enabled.includes(c.id) && (c.primary || c.accessRole === 'owner' || c.accessRole === 'writer'));
+  const calField = writable.length
+    ? `<div class="field" style="min-width:170px"><label class="label" for="g-ev-cal">Calendar</label><select class="select" id="g-ev-cal" data-in="gEvForm" data-f="calendarId">${writable
+        .map(c => `<option value="${esc(c.id)}" ${f.calendarId === c.id ? 'selected' : ''}>${esc(c.summary)}${c.primary ? ' (default)' : ''}</option>`)
+        .join('')}</select></div>`
+    : '';
   return `${H(editing ? 'Edit event' : 'New event', editing ? 'Changes are saved to your Google Calendar and attendees are notified.' : 'Saved to your Google Calendar — attendees receive an invitation.')}
   <form class="modal-b" data-submit="gEvSubmit" style="gap:10px">
     <div class="field"><label class="label" for="g-ev-title">Title</label><input class="input" id="g-ev-title" data-in="gEvForm" data-f="title" value="${esc(f.title)}" placeholder="Event title" autofocus></div>
-    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
-      <div class="field" style="flex:1;min-width:150px"><label class="label" for="g-ev-date">Date</label><input type="date" class="input" id="g-ev-date" data-in="gEvForm" data-f="date" value="${esc(f.date)}"></div>
-      <label class="row" style="gap:6px;font-size:12.5px;color:var(--text-2);cursor:pointer;padding-bottom:9px"><input type="checkbox" class="toggle" data-in="gEvForm" data-f="allDay" ${f.allDay ? 'checked' : ''}>All day</label>
-      <div class="field" style="width:110px;${f.allDay ? 'display:none' : ''}"><label class="label" for="g-ev-start">Starts</label><input type="time" class="input" id="g-ev-start" data-in="gEvForm" data-f="start" value="${esc(f.start)}"></div>
-      <div class="field" style="width:110px;${f.allDay ? 'display:none' : ''}"><label class="label" for="g-ev-end">Ends</label><input type="time" class="input" id="g-ev-end" data-in="gEvForm" data-f="end" value="${esc(f.end)}"></div>
+    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-start">
+      <div class="field" style="flex:1;min-width:150px"><label class="label" for="g-ev-date">Date</label><input type="date" class="input" id="g-ev-date" data-in="gEvForm" data-f="date" value="${esc(f.date)}">${busyStrip(f)}</div>
+      ${calField}
+    </div>
+    <label class="row" style="gap:6px;font-size:12.5px;color:var(--text-2);cursor:pointer"><input type="checkbox" class="toggle" data-in="gEvForm" data-f="allDay" ${f.allDay ? 'checked' : ''}>All day</label>
+    <div class="row" style="gap:10px;${f.allDay ? 'display:none' : ''}">
+      <div class="field" style="width:130px"><label class="label" for="g-ev-start">Starts</label><input type="time" class="input" id="g-ev-start" data-in="gEvForm" data-f="start" value="${esc(f.start)}"></div>
+      <div class="field" style="width:130px"><label class="label" for="g-ev-end">Ends</label><input type="time" class="input" id="g-ev-end" data-in="gEvForm" data-f="end" value="${esc(f.end)}"></div>
     </div>
     <div class="field"><label class="label" for="g-ev-location">Location</label><input class="input" id="g-ev-location" data-in="gEvForm" data-f="location" value="${esc(f.location)}" placeholder="Optional"></div>
     <div class="field"><label class="label" for="g-ev-attendees">Attendees</label><input class="input" id="g-ev-attendees" data-in="gEvForm" data-f="attendees" value="${esc(f.attendees)}" placeholder="name@company.com, another@company.com"><span class="hint">Comma-separated. Google emails an invitation to everyone.</span></div>

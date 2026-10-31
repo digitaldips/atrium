@@ -26,7 +26,7 @@
 import { S } from './store.js';
 import { sb } from './supabase.js';
 import { render } from '../shell/render.js';
-import { errorFromEndpoint, shouldFetch, shouldFetchWindow } from '../../supabase/functions/_shared/google-pure.js';
+import { busyOnDay, errorFromEndpoint, resolveEnabledCalendars, shouldFetch, shouldFetchWindow } from '../../supabase/functions/_shared/google-pure.js';
 
 const FN_BASE = () => (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '') + '/functions/v1';
 
@@ -98,9 +98,19 @@ export async function disconnectGoogle() {
   S.ui.gState = 'off';
   S.ui.gmsgs = [];
   S.ui.gsel = null;
+  S.ui.gselSet = new Set();
+  S.ui.gview = 'mail';
+  S.ui.glabel = '';
+  S.ui.glabels = { state: 'idle', items: [] };
+  S.ui.gdrafts = { state: 'idle', items: [] };
+  S.ui.gSearchQ = '';
+  S.ui.gSearch = { state: 'idle', msgs: [], nextPageToken: '', error: null };
+  S.ui.compose = { draftId: null };
   S.ui.gevState = 'off';
   S.ui.gevs = [];
   S.ui.gevWin = null;
+  S.ui.gcalList = { state: 'idle', items: [] };
+  S.ui.gbusy = { state: 'idle', day: null, blocks: [] };
   render();
   return !!body.connected;
 }
@@ -117,7 +127,8 @@ export async function ensureGmail() {
   S.ui.gState = 'loading';
   render();
   try {
-    const body = await gFetch('google-data/gmail', { params: { max: 25 } });
+    const label = S.ui.gview === 'mail' && S.ui.glabel ? S.ui.glabel : '';
+    const body = await gFetch('google-data/gmail', { params: { max: 25, label } });
     if (!body.connected) {
       /* invalid_grant or revoked access: honest fallback to not-connected. */
       S.ui.google = { connected: false, email: null, loaded: true };
@@ -134,23 +145,163 @@ export async function ensureGmail() {
   render();
 }
 
+/* ---------- Gmail labels (chips, badges, management) ---------- */
+
+/* One labels fetch per session per connected state: 'idle' | 'loading' |
+   'ok' | 'error'. Error is terminal until Retry / a refetch trigger. */
+export async function ensureGmailLabels() {
+  const st = (S.ui.glabels = S.ui.glabels || { state: 'idle', items: [] });
+  if (st.state === 'loading' || st.state === 'ok' || st.state === 'error') return;
+  st.state = 'loading';
+  render();
+  try {
+    const body = await gFetch('google-data/gmail/labels');
+    if (!body.connected) {
+      S.ui.google = { connected: false, email: null, loaded: true };
+      st.state = 'error';
+      st.error = 'Google is no longer connected.';
+    } else {
+      st.state = 'ok';
+      st.items = Array.isArray(body.labels) ? body.labels : [];
+    }
+  } catch (e) {
+    st.state = 'error';
+    st.error = String(e?.message || 'Could not load your labels.');
+  }
+  render();
+}
+
+export function resetGmailLabels() {
+  S.ui.glabels = { state: 'idle', items: [] };
+}
+
+export async function createGLabel(name) {
+  const body = await gFetch('google-data/gmail/label', { method: 'POST', body: { name } });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  resetGmailLabels();
+  ensureGmailLabels();
+  return body.label;
+}
+
+export async function deleteGLabel(id) {
+  const body = await gFetch('google-data/gmail/label', { method: 'DELETE', params: { id } });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  resetGmailLabels();
+  ensureGmailLabels();
+  return body.deleted !== false;
+}
+
+/* ---------- Gmail drafts (compose save/update, drafts filter) ---------- */
+
+export async function ensureGmailDrafts() {
+  const st = (S.ui.gdrafts = S.ui.gdrafts || { state: 'idle', items: [] });
+  if (st.state === 'loading') return;
+  st.state = 'loading';
+  render();
+  try {
+    const body = await gFetch('google-data/gmail/drafts', { params: { max: 25 } });
+    if (!body.connected) {
+      S.ui.google = { connected: false, email: null, loaded: true };
+      st.state = 'error';
+      st.error = 'Google is no longer connected.';
+    } else {
+      const items = Array.isArray(body.drafts) ? body.drafts : [];
+      st.state = items.length ? 'ok' : 'empty';
+      st.items = items;
+    }
+  } catch (e) {
+    st.state = 'error';
+    st.error = String(e?.message || 'Could not load your drafts.');
+  }
+  render();
+}
+
+/* Create on first save, update after — the draft id lives in
+   S.ui.compose.draftId (session-scoped compose bookkeeping). */
+export async function saveGmailDraft(form) {
+  const draftId = S.ui.compose?.draftId || '';
+  const payload = { to: form.to, cc: form.cc, subject: form.subject, body: form.body, threadId: form.threadId || '' };
+  const body = draftId
+    ? await gFetch('google-data/gmail/draft', { method: 'PATCH', params: { id: draftId }, body: payload })
+    : await gFetch('google-data/gmail/draft', { method: 'POST', body: payload });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  S.ui.compose = S.ui.compose || {};
+  S.ui.compose.draftId = body.draftId || draftId || '';
+  return S.ui.compose.draftId;
+}
+
+export async function fetchGmailDraft(id) {
+  const body = await gFetch('google-data/gmail/draft', { params: { id } });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  return body.draft;
+}
+
+export async function sendGmailDraft(draftId) {
+  const body = await gFetch('google-data/gmail/draft/send', { method: 'POST', params: { id: draftId } });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  if (S.ui.compose) S.ui.compose.draftId = null;
+  return body;
+}
+
+export async function deleteGmailDraft(draftId) {
+  const body = await gFetch('google-data/gmail/draft/delete', { method: 'DELETE', params: { id: draftId } });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  if (S.ui.compose && S.ui.compose.draftId === draftId) S.ui.compose.draftId = null;
+  return body.deleted !== false;
+}
+
+/* ---------- Gmail bulk ops (batchModify / batchDelete / batchTrash) ---------- */
+
+export async function batchGmailModify(ids, ops) {
+  const body = await gFetch('google-data/gmail/batchModify', { method: 'POST', body: { ids, ...ops } });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  return body.count;
+}
+
+export async function batchGmailDelete(ids) {
+  const body = await gFetch('google-data/gmail/batchDelete', { method: 'POST', body: { ids } });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  return body.count;
+}
+
+export async function batchGmailTrash(ids) {
+  const body = await gFetch('google-data/gmail/batchTrash', { method: 'POST', body: { ids } });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  return body.count;
+}
+
 /* ---------- Google Calendar (route 'calendar') ---------- */
 
+/* Enabled calendars: prefs.calendarIds resolved against the fetched
+   calendarList (unknown ids dropped, 'primary' resolved to the real
+   entry). The ids string is part of the fetch guard: a changed set is a
+   navigation, not a retry. */
+export function enabledCalendarIds() {
+  const list = (S.ui.gcalList && S.ui.gcalList.items) || [];
+  return resolveEnabledCalendars(Array.isArray(S.prefs.calendarIds) ? S.prefs.calendarIds : ['primary'], list);
+}
+
+export function enabledCalendarsParam() {
+  return enabledCalendarIds().join(',');
+}
+
 /* win = { from, to } — the visible grid window. Refetches whenever the
-   window changes (month navigation) and after a disconnect/retry. The
-   same-window guard is the pure shouldFetchWindow decision: a settled or
-   failed ('error') state only blocks refetching the SAME window — an
-   error stays terminal until the manual Retry action resets it. */
+   window OR the enabled set changes (month navigation, picker toggle).
+   The same-window guard is the pure shouldFetchWindow decision: a settled
+   or failed ('error') state only blocks refetching the SAME window+set —
+   an error stays terminal until the manual Retry action resets it. */
 export async function ensureGoogleCalendar(win) {
   const key = `${win.from}..${win.to}`;
-  if (!shouldFetchWindow(S.ui.gevState, key, S.ui.gevKey)) return;
+  const ids = enabledCalendarsParam();
+  if (!shouldFetchWindow(S.ui.gevState, key, S.ui.gevKey) && S.ui.gevIds === ids) return;
   S.ui.gevKey = key;
+  S.ui.gevIds = ids;
   S.ui.gevState = 'loading';
   S.ui.gevs = [];
   S.ui.gevWin = null;
   render();
   try {
-    const body = await gFetch('google-data/calendar', { params: { from: win.from, to: win.to } });
+    const body = await gFetch('google-data/calendar', { params: { from: win.from, to: win.to, ids } });
     if (!body.connected) {
       S.ui.google = { connected: false, email: null, loaded: true };
       S.ui.gevState = 'off';
@@ -167,6 +318,46 @@ export async function ensureGoogleCalendar(win) {
     S.ui.gevWin = null;
   }
   render();
+}
+
+/* calendarList: the picker source + color attribution map. One fetch per
+   session; the picker toggles re-resolve locally. */
+export async function ensureCalendarList() {
+  const st = (S.ui.gcalList = S.ui.gcalList || { state: 'idle', items: [] });
+  if (st.state !== 'idle') return;
+  st.state = 'loading';
+  render();
+  try {
+    const body = await gFetch('google-data/calendar/list');
+    if (!body.connected) {
+      S.ui.google = { connected: false, email: null, loaded: true };
+      st.state = 'error';
+      st.error = 'Google is no longer connected.';
+    } else {
+      st.state = 'ok';
+      st.items = Array.isArray(body.calendars) ? body.calendars : [];
+    }
+  } catch (e) {
+    st.state = 'error';
+    st.error = String(e?.message || 'Could not load your calendars.');
+  }
+  render();
+}
+
+/* Toggle one calendar in the persisted enabled set (prefs.calendarIds).
+   The primary calendar always stays on — it is the workspace's own
+   calendar and the honest fallback when the list is unknown. */
+export function toggleCalendarEnabled(id) {
+  const cur = Array.isArray(S.prefs.calendarIds) ? S.prefs.calendarIds : ['primary'];
+  const items = (S.ui.gcalList && S.ui.gcalList.items) || [];
+  const primary = items.find(c => c.primary);
+  if (primary && id === primary.id) return;
+  const has = cur.includes(id);
+  const next = has ? cur.filter(x => x !== id) : [...cur, id];
+  S.prefs.calendarIds = next.length ? next : ['primary'];
+  /* A changed set re-arms the window fetch on the next render. */
+  S.ui.gevKey = null;
+  S.ui.gevState = 'idle';
 }
 
 /* ---------- Gmail deep read (message + thread, format=full) ---------- */
@@ -296,7 +487,8 @@ export async function sendGmail(form) {
 export async function modifyGmail(id, patch) {
   const body = await gFetch('google-data/gmail/modify', { method: 'POST', params: { id }, body: patch });
   if (!body.connected) throw new Error('Google is no longer connected.');
-  /* Reflect the label change locally: unread in the list + deep cache. */
+  /* Reflect the label change locally: unread in the list + deep cache,
+     plus any explicit add/remove labels (star toggle, label ops). */
   if (patch && typeof patch.unread === 'boolean') {
     const row = (S.ui.gmsgs || []).find(m => m.id === id);
     if (row) row.unread = patch.unread;
@@ -305,8 +497,32 @@ export async function modifyGmail(id, patch) {
     const c = S.ui.gmsg && S.ui.gmsg[id];
     if (c && c.msg) c.msg.unread = patch.unread;
   }
+  applyLocalLabels(id, patch);
   render();
   return body;
+}
+
+/* Mirror an add/remove-labels patch onto every cached copy of the row
+   (list, search results, deep cache, drafts view) so the star and badges
+   update without a refetch. */
+function applyLocalLabels(id, patch) {
+  if (!patch || (!Array.isArray(patch.addLabelIds) && !Array.isArray(patch.removeLabelIds))) return;
+  const add = Array.isArray(patch.addLabelIds) ? patch.addLabelIds : [];
+  const remove = Array.isArray(patch.removeLabelIds) ? patch.removeLabelIds : [];
+  const rows = [
+    (S.ui.gmsgs || []).find(m => m.id === id),
+    ((S.ui.gSearch && S.ui.gSearch.msgs) || []).find(m => m.id === id),
+    S.ui.gmsg && S.ui.gmsg[id] && S.ui.gmsg[id].msg,
+  ];
+  for (const row of rows) {
+    if (!row) continue;
+    const labels = new Set(Array.isArray(row.labels) ? row.labels : []);
+    remove.forEach(l => labels.delete(l));
+    add.forEach(l => labels.add(l));
+    row.labels = [...labels];
+    row.starred = labels.has('STARRED');
+    row.unread = labels.has('UNREAD');
+  }
 }
 
 export async function trashGmail(id, untrash = false) {
@@ -324,33 +540,15 @@ export async function gAttachmentFetch(id, attachmentId) {
 }
 
 /* Refetch helper shared by the mutating actions: the terminal 'ok' state
-   is reset so the next render fetches a fresh INBOX list. */
+   is reset so the next render fetches a fresh list (with whatever label
+   filter is active); bulk selection clears with it. */
 export function refetchGmailList() {
   S.ui.gState = 'idle';
   S.ui.gsel = null;
+  S.ui.gselSet = new Set();
   S.ui.gSearchQ = '';
   S.ui.gSearch = { state: 'idle', msgs: [], nextPageToken: '', error: null };
   render();
-}
-
-/* ---------- Google Calendar CRUD ---------- */
-
-export async function createGEvent(payload) {
-  const body = await gFetch('google-data/calendar/event', { method: 'POST', body: payload });
-  if (!body.connected) throw new Error('Google is no longer connected.');
-  return body.event;
-}
-
-export async function updateGEvent(id, payload) {
-  const body = await gFetch('google-data/calendar/event/update', { method: 'PATCH', params: { id }, body: payload });
-  if (!body.connected) throw new Error('Google is no longer connected.');
-  return body.event;
-}
-
-export async function deleteGEvent(id) {
-  const body = await gFetch('google-data/calendar/event/delete', { method: 'DELETE', params: { id } });
-  if (!body.connected) throw new Error('Google is no longer connected.');
-  return body.deleted !== false;
 }
 
 /* Re-arm the calendar window after a mutation: the settled/error guard
@@ -360,4 +558,78 @@ export function refetchCalendarWindow(win) {
   S.ui.gevKey = null;
   S.ui.gevState = 'idle';
   ensureGoogleCalendar(win);
+}
+
+/* ---------- Google Calendar CRUD (calendarId-optional) ---------- */
+
+/* calendarId is sent only when it differs from the alias default — the
+   endpoint validates it against the calendarList anyway. */
+function calendarIdParam() {
+  const ids = enabledCalendarIds();
+  return ids.length === 1 && ids[0] !== 'primary' ? ids[0] : '';
+}
+
+export async function createGEvent(payload) {
+  const params = {};
+  const cid = payload.calendarId || calendarIdParam();
+  if (cid) params.calendarId = cid;
+  const body = await gFetch('google-data/calendar/event', { method: 'POST', params, body: payload });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  return body.event;
+}
+
+export async function updateGEvent(id, payload) {
+  const params = { id };
+  const cid = payload.calendarId || calendarIdParam();
+  if (cid) params.calendarId = cid;
+  const body = await gFetch('google-data/calendar/event/update', { method: 'PATCH', params, body: payload });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  return body.event;
+}
+
+export async function deleteGEvent(id, calendarId = '') {
+  const params = { id };
+  const cid = calendarId || calendarIdParam();
+  if (cid) params.calendarId = cid;
+  const body = await gFetch('google-data/calendar/event/delete', { method: 'DELETE', params });
+  if (!body.connected) throw new Error('Google is no longer connected.');
+  return body.deleted !== false;
+}
+
+/* ---------- freeBusy (event modal busy strip) ---------- */
+
+/* Busy blocks for ONE day across the enabled calendars, in the user's
+   own timezone: the day window is [local 00:00, +24h), the blocks are
+   clipped to it by the pure busyOnDay. state: 'idle' | 'loading' |
+   'empty' | 'ok' | 'error'. Re-arming: a different day always fetches. */
+export async function ensureFreebusy(dateStr) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr || '')) return;
+  const st = (S.ui.gbusy = S.ui.gbusy || { state: 'idle', day: null, blocks: [] });
+  if (st.state === 'loading' || ((st.state === 'ok' || st.state === 'empty') && st.day === dateStr)) return;
+  st.state = 'loading';
+  st.day = dateStr;
+  render();
+  try {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const start = new Date(y, m - 1, d);
+    const end = new Date(y, m - 1, d + 1);
+    const body = await gFetch('google-data/calendar/freebusy', { method: 'POST', body: { from: dateStr, to: dateStr, calendarIds: enabledCalendarIds() } });
+    if (!body.connected) {
+      S.ui.google = { connected: false, email: null, loaded: true };
+      st.state = 'error';
+      st.error = 'Google is no longer connected.';
+      st.blocks = [];
+    } else {
+      const busy = Array.isArray(body.busy) ? body.busy : [];
+      const blocks = busyOnDay(busy, start.getTime(), end.getTime());
+      st.state = blocks.length ? 'ok' : 'empty';
+      st.blocks = blocks;
+      st.day = dateStr;
+    }
+  } catch (e) {
+    st.state = 'error';
+    st.error = String(e?.message || 'Could not load busy times.');
+    st.blocks = [];
+  }
+  render();
 }

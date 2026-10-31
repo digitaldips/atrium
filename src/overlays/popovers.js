@@ -7,7 +7,7 @@ import { av, avStack, prIcon, stIcon } from '../ui/helpers.js';
 import { focusKey, render } from '../shell/render.js';
 import { FIELDS, viewOf } from '../shell/view-engine.js';
 import { TCOLS } from '../views/table.js';
-import { startOfWeek } from '../views/calendar.js';
+import { startOfWeek, gcalPickerRows } from '../views/calendar.js';
 import { eventDateKey, eventTimeLabel, eventTimeRange, safeLink } from '../../supabase/functions/_shared/google-pure.js';
 import { ctxMenu } from './context-menu.js';
 
@@ -368,14 +368,19 @@ export function popHtml(p) {
          is re-validated here (defense in depth): an unsafe value renders
          as plain text instead of a link. */
       const safeGcalLink = safeLink(g.htmlLink);
+      const evCal = g.calendarColor || '#1A73E8';
       inner =
-        `<div style="padding:10px 10px 6px"><div class="row" style="gap:8px;margin-bottom:6px"><span class="pdot" style="--c:var(--gcal);border-radius:50%"></span><b style="font-size:14px;font-weight:600">${esc(g.summary || '(untitled event)')}</b></div><div class="muted" style="font-size:12.5px;display:flex;flex-direction:column;gap:4px"><span class="row" style="gap:6px">${ic('calendar', 13)}${esc(eventTimeRange(g))}</span>${g.location ? `<span class="row" style="gap:6px">${ic('map-pin', 13)}${esc(g.location)}</span>` : ''}${g.attendees && g.attendees.length ? `<span class="row" style="gap:6px">${ic('users', 13)}${esc(g.attendees.slice(0, 3).join(', '))}${g.attendees.length > 3 ? ` +${g.attendees.length - 3}` : ''}</span>` : ''}${g.description ? `<span class="row" style="gap:6px">${ic('align-left', 13)}<span class="trunc" style="max-height:2.6em;overflow:hidden">${esc(g.description)}</span></span>` : ''}</div></div><div class="msep"></div><button class="mi" data-a="gEventEdit" data-id="${esc(g.id)}">${ic('pencil', 14)}Edit</button><button class="mi" data-a="gEventDelete" data-id="${esc(g.id)}">${ic('trash-2', 14)}Delete</button>` +
+        `<div style="padding:10px 10px 6px"><div class="row" style="gap:8px;margin-bottom:6px"><span class="pdot" style="--c:${esc(evCal)};border-radius:50%"></span><b style="font-size:14px;font-weight:600">${esc(g.summary || '(untitled event)')}</b></div><div class="muted" style="font-size:12.5px;display:flex;flex-direction:column;gap:4px"><span class="row" style="gap:6px">${ic('calendar', 13)}${esc(eventTimeRange(g))}</span>${g.calendarSummary ? `<span class="row" style="gap:6px">${ic('calendar-days', 13)}<span class="trunc">${esc(g.calendarSummary)}</span></span>` : ''}${g.location ? `<span class="row" style="gap:6px">${ic('map-pin', 13)}${esc(g.location)}</span>` : ''}${g.attendees && g.attendees.length ? `<span class="row" style="gap:6px">${ic('users', 13)}${esc(g.attendees.slice(0, 3).join(', '))}${g.attendees.length > 3 ? ` +${g.attendees.length - 3}` : ''}</span>` : ''}${g.description ? `<span class="row" style="gap:6px">${ic('align-left', 13)}<span class="trunc" style="max-height:2.6em;overflow:hidden">${esc(g.description)}</span></span>` : ''}</div></div><div class="msep"></div><button class="mi" data-a="gEventEdit" data-id="${esc(g.id)}">${ic('pencil', 14)}Edit</button><button class="mi" data-a="gEventDelete" data-id="${esc(g.id)}">${ic('trash-2', 14)}Delete</button>` +
         (safeGcalLink
           ? `<div class="msep"></div><a class="mi" href="${esc(safeGcalLink)}" target="_blank" rel="noopener noreferrer">${ic('arrow-up-right', 14)}Open in Google Calendar</a>`
           : '');
       style = 'width:270px';
       break;
     }
+    case 'gcalpick':
+      inner = `<div style="padding:6px 4px"><div class="eyebrow" style="padding:4px 10px">Calendars shown</div>${gcalPickerRows()}</div>`;
+      style = 'width:270px';
+      break;
     case 'emoji':
       inner = `<div class="row" style="gap:2px;padding:2px">${['👍', '🎉', '❤️', '👀', '🚀', '✅'].map(e => `<button class="ibtn" data-a="react" data-id="${p.id}" data-e="${e}" style="font-size:16px" aria-label="React ${e}">${e}</button>`).join('')}</div>`;
       style = 'min-width:0';

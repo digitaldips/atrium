@@ -3,7 +3,7 @@ import { A, IN, KEY, confirmDlg } from './actions.js';
 import { $, esc, iso, addD, parse } from '../core/utils.js';
 import { S } from '../core/store.js';
 import { render } from '../shell/render.js';
-import { toast } from '../ui/toast.js';
+import { toast, mutate } from '../ui/toast.js';
 import { openModal, closeModal } from '../overlays/modals.js';
 import { eventDateKey } from '../../supabase/functions/_shared/google-pure.js';
 import {
@@ -29,6 +29,21 @@ import {
   refetchCalendarWindow,
 } from '../core/google.js';
 import { currentCalWindow } from '../views/calendar.js';
+import {
+  batchGmailDelete,
+  batchGmailModify,
+  batchGmailTrash,
+  createGLabel,
+  deleteGLabel,
+  deleteGmailDraft,
+  ensureCalendarList,
+  ensureFreebusy,
+  ensureGmailDrafts,
+  fetchGmailDraft,
+  saveGmailDraft,
+  sendGmailDraft,
+  toggleCalendarEnabled,
+} from '../core/google.js';
 
 const errToast = e => toast(e?.message || 'Something went wrong.', { kind: 'err' });
 
@@ -158,6 +173,7 @@ IN.gForm = el => {
 };
 A.gCompose = () => {
   S.ui.gform = { to: '', cc: '', subject: '', body: '', threadId: '', inReplyTo: '', references: '', sending: false, error: null };
+  S.ui.compose = { draftId: null };
   openModal({ type: 'compose' });
 };
 A.gReply = el => {
@@ -179,6 +195,7 @@ A.gReply = el => {
     sending: false,
     error: null,
   };
+  S.ui.compose = { draftId: null };
   openModal({ type: 'compose', reply: true });
 };
 A.gSend = async () => {
@@ -204,14 +221,49 @@ A.gSend = async () => {
   f.error = null;
   render();
   try {
-    await sendGmail({ to: f.to, cc: f.cc, subject: f.subject, body: f.body, threadId: f.threadId, inReplyTo: f.inReplyTo, references: f.references });
+    /* Draft-aware send: a compose opened from the drafts list sends the
+       DRAFT itself (drafts/send) — the draft disappears from Gmail's
+       drafts on send. A fresh compose/reply uses messages/send as before. */
+    const draftId = S.ui.compose?.draftId || '';
+    if (draftId) await sendGmailDraft(draftId);
+    else await sendGmail({ to: f.to, cc: f.cc, subject: f.subject, body: f.body, threadId: f.threadId, inReplyTo: f.inReplyTo, references: f.references });
     closeModal();
     toast('Message sent');
     refetchGmailList();
     ensureGmail();
+    if (S.ui.gview === 'drafts') ensureGmailDrafts();
   } catch (e) {
     f.sending = false;
     f.error = e?.message || 'Sending failed.';
+    render();
+  }
+};
+A.gSaveDraft = async () => {
+  const f = S.ui.gform;
+  if (f.saving) return;
+  f.to = ($('#g-to')?.value ?? f.to).trim();
+  f.cc = ($('#g-cc')?.value ?? f.cc).trim();
+  f.subject = $('#g-subject')?.value ?? f.subject;
+  f.body = $('#g-body')?.value ?? f.body;
+  /* A draft may be empty of recipients — but not empty of everything. */
+  if (!f.to && !f.cc && !f.subject && !f.body) {
+    f.error = 'Nothing to save yet — write something first.';
+    render();
+    return;
+  }
+  f.saving = true;
+  f.error = null;
+  render();
+  try {
+    const id = await saveGmailDraft({ to: f.to, cc: f.cc, subject: f.subject, body: f.body, threadId: f.threadId });
+    f.saving = false;
+    closeModal();
+    toast('Draft saved', { action: 'View drafts', onAction: () => A.gDraftsChip() });
+    if (S.ui.gview === 'drafts') ensureGmailDrafts();
+    return id;
+  } catch (e) {
+    f.saving = false;
+    f.error = e?.message || 'Saving the draft failed.';
     render();
   }
 };
@@ -273,6 +325,204 @@ A.gTrash = el => {
   });
 };
 
+/* ---------- Gmail star toggle (rows + message view) ---------- */
+A.gStar = async el => {
+  const id = el.dataset.id || S.ui.gsel;
+  const m = (S.ui.gmsgs || []).find(x => x.id === id) || ((S.ui.gSearch && S.ui.gSearch.msgs) || []).find(x => x.id === id);
+  try {
+    await modifyGmail(id, m && m.starred ? { removeLabelIds: ['STARRED'] } : { addLabelIds: ['STARRED'] });
+  } catch (e) {
+    errToast(e);
+  }
+};
+
+/* ---------- Gmail chips: view + label filters ---------- */
+
+/* Selecting a chip re-arms the list fetch (gState='idle' → the next
+   render fetches with the new label param). The preview selection resets
+   with the list so a stale message never stays open across filters. */
+function armMailList() {
+  S.ui.gState = 'idle';
+  S.ui.gsel = null;
+  S.ui.gSearchQ = '';
+  S.ui.gSearch = { state: 'idle', msgs: [], nextPageToken: '', error: null };
+  render();
+}
+A.gMailChip = () => {
+  S.ui.gview = 'mail';
+  S.ui.glabel = '';
+  armMailList();
+};
+A.gLabelChip = el => {
+  const id = el.dataset.id || '';
+  if (!id) return;
+  S.ui.gview = 'mail';
+  S.ui.glabel = id;
+  armMailList();
+};
+A.gDraftsChip = () => {
+  S.ui.gview = 'drafts';
+  S.ui.gsel = null;
+  render();
+  ensureGmailDrafts();
+};
+A.gLabelNew = () => {
+  openModal({
+    type: 'prompt',
+    title: 'New label',
+    label: 'Label name',
+    ok: 'Create label',
+    run: async v => {
+      if (!v) return;
+      try {
+        await createGLabel(v);
+        toast(`Label "${v}" created`);
+      } catch (e) {
+        errToast(e);
+      }
+    },
+  });
+};
+A.gLabelDelete = el => {
+  const id = el.dataset.id;
+  const name = el.dataset.tip?.match(/“(.*)”/)?.[1] || id;
+  confirmDlg({
+    title: `Delete label "${name}"?`,
+    body: 'The label is removed from your Gmail. Messages keep every other label — the mail itself is never deleted.',
+    ok: 'Delete label',
+    danger: true,
+    icon: 'tag',
+    run: async () => {
+      try {
+        await deleteGLabel(id);
+        if (S.ui.glabel === id) {
+          S.ui.glabel = '';
+          armMailList();
+        }
+        toast('Label deleted');
+      } catch (e) {
+        errToast(e);
+      }
+    },
+  });
+};
+
+/* ---------- Gmail bulk ops (gselSet) ---------- */
+A.gSelRow = el => {
+  const id = el.dataset.id;
+  const sel = (S.ui.gselSet = S.ui.gselSet || new Set());
+  sel.has(id) ? sel.delete(id) : sel.add(id);
+  render();
+};
+A.gBulkClear = () => {
+  S.ui.gselSet = new Set();
+  render();
+};
+A.gBulk = el => {
+  const op = el.dataset.op;
+  const ids = [...(S.ui.gselSet || new Set())];
+  if (!ids.length) return;
+  const finish = n => {
+    S.ui.gselSet = new Set();
+    refetchGmailList();
+    ensureGmail();
+    toast(`${n} message${n === 1 ? '' : 's'} updated`);
+  };
+  const runModify = async ops => {
+    try {
+      const n = await batchGmailModify(ids, ops);
+      finish(n);
+    } catch (e) {
+      errToast(e);
+    }
+  };
+  if (op === 'read') return runModify({ unread: false });
+  if (op === 'unread') return runModify({ unread: true });
+  if (op === 'archive') return runModify({ archive: true });
+  if (op === 'trash')
+    return confirmDlg({
+      title: `Move ${ids.length} message${ids.length > 1 ? 's' : ''} to Trash?`,
+      body: 'They move to your Gmail Trash and stay recoverable there for 30 days.',
+      ok: `Trash ${ids.length}`,
+      danger: true,
+      icon: 'trash-2',
+      run: async () => {
+        try {
+          const n = await batchGmailTrash(ids);
+          finish(n);
+        } catch (e) {
+          errToast(e);
+        }
+      },
+    });
+  if (op === 'delete')
+    return confirmDlg({
+      title: `Delete ${ids.length} message${ids.length > 1 ? 's' : ''} forever?`,
+      body: '<b>This is permanent.</b> Gmail has no undo for deleting forever — the messages are gone from every folder, not just the inbox.',
+      ok: `Delete ${ids.length} forever`,
+      typeName: 'DELETE',
+      danger: true,
+      icon: 'trash-2',
+      run: async () => {
+        try {
+          const n = await batchGmailDelete(ids);
+          S.ui.gselSet = new Set();
+          refetchGmailList();
+          ensureGmail();
+          toast(`${n} message${n === 1 ? '' : 's'} deleted forever`);
+        } catch (e) {
+          errToast(e);
+        }
+      },
+    });
+};
+
+/* ---------- Gmail drafts ---------- */
+A.gDraftOpen = async el => {
+  const id = el.dataset.id;
+  if (!id) return;
+  S.ui.gsel = null;
+  render();
+  try {
+    const draft = await fetchGmailDraft(id);
+    if (!draft) throw new Error('The draft could not be loaded.');
+    S.ui.gform = {
+      to: draft.to || '',
+      cc: draft.cc || '',
+      subject: draft.subject === '(no subject)' ? '' : draft.subject || '',
+      body: draft.body?.body || '',
+      threadId: draft.threadId || '',
+      inReplyTo: '',
+      references: '',
+      sending: false,
+      error: null,
+    };
+    S.ui.compose = { draftId: draft.id || id };
+    openModal({ type: 'compose' });
+  } catch (e) {
+    errToast(e);
+  }
+};
+A.gDraftDelete = el => {
+  const id = el.dataset.id;
+  confirmDlg({
+    title: 'Delete draft?',
+    body: 'The draft is removed from your Gmail. This cannot be undone.',
+    ok: 'Delete draft',
+    danger: true,
+    icon: 'trash-2',
+    run: async () => {
+      try {
+        await deleteGmailDraft(id);
+        ensureGmailDrafts();
+        toast('Draft deleted');
+      } catch (e) {
+        errToast(e);
+      }
+    },
+  });
+};
+
 /* ---------- Google Calendar CRUD ---------- */
 function gEvForm(mode, ev, date) {
   const allDay = ev ? !!ev.start?.date : true;
@@ -289,26 +539,33 @@ function gEvForm(mode, ev, date) {
     location: ev ? ev.location || '' : '',
     description: ev ? ev.description || '' : '',
     attendees: ev ? (ev.attendees || []).join(', ') : '',
+    calendarId: ev ? ev.calendarId || '' : '',
     sending: false,
     error: null,
   };
 }
 IN.gEvForm = el => {
   S.ui.gEvForm[el.dataset.f] = el.dataset.f === 'allDay' ? el.checked : el.value;
-  /* Only the All-day toggle changes the form's shape (time fields). */
+  /* Only the All-day toggle changes the form's shape (time fields); a
+     date change re-arms the busy strip for that day. */
   if (el.dataset.f === 'allDay') render();
+  else if (el.dataset.f === 'date' && el.value) ensureFreebusy(el.value);
 };
 A.gEventNew = el => {
   if (!googleStatus().connected) return;
+  ensureCalendarList(); // picker source (no-op once cached)
   S.ui.gEvForm = gEvForm('create', null, el.dataset.date);
   S.ui.errors = {};
+  if (el.dataset.date) ensureFreebusy(el.dataset.date);
   openModal({ type: 'geventForm' });
 };
 A.gEventEdit = el => {
   const ev = (S.ui.gevs || []).find(x => x.id === el.dataset.id);
   if (!ev) return;
+  ensureCalendarList();
   S.ui.gEvForm = gEvForm('edit', ev);
   S.ui.pop = null;
+  if (S.ui.gEvForm.date) ensureFreebusy(S.ui.gEvForm.date);
   openModal({ type: 'geventForm' });
 };
 A.gEvCancel = () => {
@@ -352,23 +609,22 @@ A.gEvSubmit = async () => {
     render();
     return;
   }
-  const payload = f.allDay
-    ? {
-        title: f.title,
-        start: { date: f.date },
-        end: { date: iso(addD(parse(f.date), 1)) }, // Google end dates are exclusive
-        location: f.location,
-        description: f.description,
-        attendees,
-      }
-    : {
-        title: f.title,
-        start: { dateTime: withLocalOffset(f.date, f.start) },
-        end: { dateTime: withLocalOffset(f.date, f.end) },
-        location: f.location,
-        description: f.description,
-        attendees,
-      };
+  const payload = {
+    ...(f.allDay
+      ? {
+          start: { date: f.date },
+          end: { date: iso(addD(parse(f.date), 1)) }, // Google end dates are exclusive
+        }
+      : {
+          start: { dateTime: withLocalOffset(f.date, f.start) },
+          end: { dateTime: withLocalOffset(f.date, f.end) },
+        }),
+    title: f.title,
+    location: f.location,
+    description: f.description,
+    attendees,
+    calendarId: f.calendarId || '',
+  };
   f.sending = true;
   f.error = null;
   render();
@@ -396,7 +652,7 @@ A.gEventDelete = el => {
     icon: 'trash-2',
     run: async () => {
       try {
-        await deleteGEvent(id);
+        await deleteGEvent(id, ev?.calendarId || '');
         toast('Event deleted — attendees notified');
         refetchCalendarWindow(currentCalWindow());
       } catch (e) {
@@ -404,4 +660,15 @@ A.gEventDelete = el => {
       }
     },
   });
+};
+
+/* ---------- calendar picker (Calendar page header + Settings) ---------- */
+
+/* Toggles one calendar in the persisted enabled set (prefs.calendarIds).
+   mutate() runs the write + save (write-through sync) + render; the
+   changed set re-arms the window fetch via toggleCalendarEnabled. */
+A.gCalToggle = el => {
+  const id = el.dataset.id;
+  if (!id) return;
+  mutate(() => toggleCalendarEnabled(id));
 };

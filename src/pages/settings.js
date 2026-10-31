@@ -9,7 +9,8 @@ import { permsTable, teamsGrid } from './members.js';
 import { page404 } from './errors.js';
 import { SHORTCUTS } from '../overlays/modals.js';
 import { googleReturnBanner, scopeShortNames } from '../../supabase/functions/_shared/google-pure.js';
-import { googleStatus, loadGoogleStatus } from '../core/google.js';
+import { googleStatus, loadGoogleStatus, ensureCalendarList } from '../core/google.js';
+import { gcalPickerRows } from '../views/calendar.js';
 
 export const SET_NAV = [
   [
@@ -445,6 +446,7 @@ export function googleIntegrationsBody(H) {
      has not landed yet, fire it once from this render — the in-flight and
      terminal-error guards keep this from ever becoming a render loop. */
   if (ret && !g.loaded && !g.error && !S.ui.googleStatusLoading) loadGoogleStatus();
+  if (g.connected) ensureCalendarList(); // picker source (no-op once cached)
   const kind = googleReturnBanner(ret, g)?.kind;
   const banner =
     kind === 'success'
@@ -488,6 +490,11 @@ export function googleIntegrationsBody(H) {
     H('Connect Atrium to the tools you already use.') +
     banner +
     `<div class="sblock" style="margin-top:0"><h2>Google</h2>${row}${reconsent}</div>
+    ${
+      g.connected
+        ? `<div class="sblock" style="margin-top:12px"><h2>Calendars</h2><p class="hint" style="margin:2px 0 10px">Pick which Google calendars show on the Calendar page. Your main calendar is always on.</p><div class="panel" style="padding:4px">${gcalPickerRows()}</div></div>`
+        : ''
+    }
     <p class="hint" style="margin-top:12px">Atrium requests exactly <b>gmail.modify</b>, <b>gmail.send</b>, <b>calendar.readonly</b> and <b>calendar.events</b> — nothing else. Tokens are stored server-side (never in the browser) and can be removed any time with Disconnect.</p>`
   );
 }

@@ -2,7 +2,7 @@
 import { MONL, TODAY, WD, addD, diffD, esc, fmtDate, iso, parse, sod } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { D, S, allTasks, pColor, proj } from '../core/store.js';
-import { googleStatus, ensureGoogleCalendar } from '../core/google.js';
+import { googleStatus, ensureGoogleCalendar, ensureCalendarList, enabledCalendarIds } from '../core/google.js';
 import { eventDateKey, eventTimeLabel, monthWindow } from '../../supabase/functions/_shared/google-pure.js';
 import { av, prIcon, stIcon } from '../ui/helpers.js';
 import { fxc } from '../shell/render.js';
@@ -23,7 +23,8 @@ export function currentCalWindow() {
   const ws = startOfWeek(cur);
   return { from: iso(ws), to: iso(addD(ws, 6)) };
 }
-const GCAL = '#1A73E8'; // Google blue — marks every Google-calendar surface
+const GCAL = '#1A73E8'; // Google blue — the fallback when a calendar has no color
+const evColor = g => g.calendarColor || GCAL;
 export function calendarHtml(ts, opt = {}) {
   const cur = parse(S.ui.calDate);
   const mode = S.ui.calMode;
@@ -40,7 +41,7 @@ export function calendarHtml(ts, opt = {}) {
     if (it.g) {
       const g = it.g;
       const tl = eventTimeLabel(g);
-      return `<button class="cev gev" style="--c:${GCAL}" data-a="pop" data-pop="gevent" data-id="${esc(g.id)}" title="${esc(g.summary || '(untitled event)')} · ${esc(tl)}">${tl && tl !== 'All day' ? `<span class="num faint" style="font-size:11px">${esc(tl)}</span>` : ic('calendar-days', 11)}<span class="trunc">${esc(g.summary || '(untitled event)')}</span></button>`;
+      return `<button class="cev gev" style="--c:${evColor(g)}" data-a="pop" data-pop="gevent" data-id="${esc(g.id)}" title="${esc(g.summary || '(untitled event)')} · ${esc(tl)}${g.calendarSummary ? ` · ${esc(g.calendarSummary)}` : ''}">${tl && tl !== 'All day' ? `<span class="num faint" style="font-size:11px">${esc(tl)}</span>` : ic('calendar-days', 11)}<span class="trunc">${esc(g.summary || '(untitled event)')}</span></button>`;
     }
     if (it.ev) {
       const p = proj(it.ev.project);
@@ -86,7 +87,7 @@ export function calendarHtml(ts, opt = {}) {
             .map(it => {
               if (it.g) {
                 const g = it.g;
-                return `<button class="wcard gev" style="--c:${GCAL}" data-a="pop" data-pop="gevent" data-id="${esc(g.id)}"><span class="t"><span class="pdot" style="--c:${GCAL};border-radius:50%"></span>${esc(g.summary || '(untitled event)')}</span><span class="m">${ic('clock', 11)}${esc(eventTimeLabel(g))} · Google</span></button>`;
+                return `<button class="wcard gev" style="--c:${evColor(g)}" data-a="pop" data-pop="gevent" data-id="${esc(g.id)}"><span class="t"><span class="pdot" style="--c:${evColor(g)};border-radius:50%"></span>${esc(g.summary || '(untitled event)')}</span><span class="m">${ic('clock', 11)}${esc(eventTimeLabel(g))} · ${esc(g.calendarSummary || 'Google')}</span></button>`;
               }
               if (it.ev) {
                 const p = proj(it.ev.project);
@@ -111,7 +112,7 @@ export function calendarHtml(ts, opt = {}) {
       <span class="sp"></span>
       ${
         !opt.project && showGcal
-          ? `<span class="row hide-m" style="gap:10px;font-size:11.5px;color:var(--text-2);margin-right:8px"><span class="row" style="gap:4px"><span class="pdot" style="--c:${GCAL}"></span>Google Calendar</span></span>`
+          ? `<span class="row hide-m" style="gap:10px;font-size:11.5px;color:var(--text-2);margin-right:8px"><span class="row" style="gap:4px"><span class="pdot" style="--c:${GCAL}"></span>Google Calendar</span><button class="btn btn-secondary btn-sm" data-a="pop" data-pop="gcalpick" aria-haspopup="true">${ic('list', 13)}Calendars</button></span>`
           : ''
       }
       ${
@@ -154,9 +155,35 @@ export function pageWsCalendar() {
   const g = googleStatus();
   /* Fetch-on-render: while connected, make sure the visible window's
      Google events are loaded (no-op once cached for this window; renders
-     again when the fetch settles). */
-  if (g.connected) ensureGoogleCalendar(currentCalWindow());
+     again when the fetch settles). The calendarList feeds the picker +
+     the enabled-set resolution (no-op once cached). */
+  if (g.connected) {
+    ensureCalendarList();
+    ensureGoogleCalendar(currentCalWindow());
+  }
   const gevState = S.ui.gevState;
   return `<div class="page flush"><div class="ph"><div><h1>Calendar</h1><p>Deadlines, events and your Google Calendar across every project.</p></div><div class="acts"><button class="btn btn-primary" data-a="newTask">${ic('plus', 14)}New task</button></div></div>
   ${gcalBanner()}${viewToolbar(key, { group: false })}${calendarHtml(applyView(allTasks(), v), { key, events: true, google: gevState !== 'off', gevs: gevState !== 'off' })}</div>`;
+}
+
+/* ---------- calendar picker rows (popover + Settings) ---------- */
+
+/* One row per calendarList entry: color dot, name, check when enabled.
+   The primary calendar is always on (toggleCalendarEnabled refuses it) —
+   it is the workspace's own calendar and the honest fallback. */
+export function gcalPickerRows() {
+  const st = S.ui.gcalList || { state: 'idle', items: [] };
+  if (!st.items.length)
+    return `<div class="mi faint" style="cursor:default">${st.state === 'error' ? esc(st.error || 'Could not load your calendars.') : st.state === 'loading' ? 'Loading your calendars…' : 'Connect Google to pick calendars.'}</div>`;
+  const enabled = enabledCalendarIds();
+  return st.items
+    .map(c => {
+      const on = enabled.includes(c.id);
+      return `<button class="mi" data-a="gCalToggle" data-id="${esc(c.id)}"${c.primary ? ' data-tip="Your main calendar is always on"' : ''} aria-pressed="${on}">
+        <span class="pdot" style="--c:${esc(c.backgroundColor || GCAL)};border-radius:50%"></span>
+        <span class="trunc grow">${esc(c.summary)}${c.primary ? ' <span class="faint">(default)</span>' : ''}</span>
+        ${on ? ic('check', 14) : '<span style="width:14px;flex-shrink:0"></span>'}
+      </button>`;
+    })
+    .join('');
 }

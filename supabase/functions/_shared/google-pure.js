@@ -166,6 +166,7 @@ export function mapGmailMessage(m) {
   };
   const { name, email } = parseFromHeader(header('from'));
   const date = m.internalDate != null ? Number(m.internalDate) : 0;
+  const labels = Array.isArray(m.labelIds) ? m.labelIds : [];
   return {
     id: m.id || '',
     from: name || email || '(unknown sender)',
@@ -173,7 +174,9 @@ export function mapGmailMessage(m) {
     subject: header('subject') || '(no subject)',
     snippet: m.snippet || '',
     date: Number.isFinite(date) ? date : 0,
-    unread: Array.isArray(m.labelIds) ? m.labelIds.includes('UNREAD') : false,
+    unread: labels.includes('UNREAD'),
+    starred: labels.includes('STARRED'),
+    labels,
     webLink: m.id ? `https://mail.google.com/mail/u/0/#inbox/${m.id}` : '',
   };
 }
@@ -566,6 +569,310 @@ export function errorFromEndpoint(out, status) {
   const base = out && typeof out.error === 'string' && out.error ? out.error : status ? `Request failed (${status})` : 'Request failed';
   const detail = out && typeof out.detail === 'string' ? out.detail.trim() : '';
   return detail ? `${base}: ${detail}` : base;
+}
+
+/* ---------- Gmail depth: drafts, labels, bulk (shared pure logic) ---------- */
+
+/* Gmail drafts.get resource → the compose-prefill shape. Works for BOTH
+   the list fetch (format=metadata: no body data → an empty text body) and
+   the open fetch (format=full: the preferred body is parsed exactly like
+   mapGmailFull does). Never throws; a draft without an id is dropped. */
+export function mapGmailDraft(d) {
+  if (!d || typeof d !== 'object' || !d.id) return null;
+  const m = d.message && typeof d.message === 'object' ? d.message : {};
+  const headers = (m.payload && m.payload.headers) || [];
+  const header = name => {
+    const h = headers.find(x => x && x.name && x.name.toLowerCase() === name);
+    return h ? h.value : '';
+  };
+  const date = m.internalDate != null ? Number(m.internalDate) : 0;
+  return {
+    id: d.id,
+    messageId: m.id || '',
+    threadId: m.threadId || '',
+    to: header('to'),
+    cc: header('cc'),
+    subject: header('subject') || '(no subject)',
+    snippet: m.snippet || '',
+    date: Number.isFinite(date) ? date : 0,
+    body: parseGmailBody(m.payload),
+  };
+}
+
+/* Draft compose body → normalized fields. A DRAFT may have no recipients
+   yet (unlike send, where `to` is required), so every field is optional —
+   but the caps carry over exactly (to/cc ≤ 1000, subject ≤ 998, body ≤
+   200k): oversized drafts are rejected, never forwarded to Google. */
+export function parseDraftCompose(body) {
+  const to = typeof body?.to === 'string' ? body.to.trim() : '';
+  const cc = typeof body?.cc === 'string' ? body.cc : '';
+  const subject = typeof body?.subject === 'string' ? body.subject : '';
+  const text = typeof body?.body === 'string' ? body.body : '';
+  if (to.length > 1000 || cc.length > 1000) return { error: 'invalid_recipient' };
+  if (subject.length > 998) return { error: 'subject_too_long' };
+  if (text.length > 200_000) return { error: 'body_too_long' };
+  return { to, cc, subject, text };
+}
+
+/* labels.list/get resource → { id, name, type }. A missing type field is
+   treated as 'system' (fail closed: system labels can never be deleted). */
+export function mapGmailLabel(l) {
+  if (!l || typeof l !== 'object' || !l.id) return null;
+  return {
+    id: l.id,
+    name: typeof l.name === 'string' && l.name ? l.name : l.id,
+    type: l.type === 'user' ? 'user' : 'system',
+  };
+}
+
+/* System label ids (the fixed set + the two dynamic prefixes: category
+   tabs and group labels). User label ids look like "Label_<hex>" — never
+   system. Gmail's delete endpoint must refuse system ids; this check is
+   the cheap static half (the labels.get type check is the honest half). */
+const SYSTEM_LABEL_IDS = new Set([
+  'INBOX',
+  'UNREAD',
+  'STARRED',
+  'IMPORTANT',
+  'SENT',
+  'DRAFT',
+  'TRASH',
+  'SPAM',
+  'MUTE',
+  'BINALERT_PHISHING',
+  'ARCHIVED',
+  'FORUM',
+  'SOCIAL',
+  'PROMOTIONS',
+  'UPDATES',
+  'PERSONAL',
+]);
+
+export function isSystemLabelId(id) {
+  if (typeof id !== 'string' || !id) return false;
+  return SYSTEM_LABEL_IDS.has(id) || id.startsWith('CATEGORY_') || id.startsWith('GOOGR');
+}
+
+/* A user-typed label name: control characters (header-injection payloads)
+   collapse to spaces, edges trim, hard cap at 100 chars. Empty → '' (the
+   caller answers 400). */
+export function validLabelName(name) {
+  if (typeof name !== 'string') return '';
+  return name
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ') // eslint-disable-line no-control-regex -- control chars ARE the injection payload
+    .trim()
+    .slice(0, 100);
+}
+
+/* Gmail resource ids (messages, threads, labels) are base64url opaque
+   tokens. Keep only strings from that alphabet, deduped, capped at `max`
+   (batch calls go out with at most 50 ids; label lists with at most 10).
+   Non-strings / malformed ids never reach a Google URL. */
+export function validIdList(raw, max = 50) {
+  const out = [];
+  for (const v of Array.isArray(raw) ? raw : []) {
+    if (typeof v === 'string' && /^[A-Za-z0-9_-]{1,256}$/.test(v) && !out.includes(v)) out.push(v);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/* Bulk-modify payload for messages.batchModify. `unread: true|false` maps
+   to UNREAD add/remove, `archive: true` removes INBOX; explicit
+   addLabelIds/removeLabelIds (≤10, valid ids only) carry the label and
+   star operations. Errors instead of partial payloads: no ids → 'no_ids',
+   an empty operation set → 'nothing_to_do'. */
+export function buildBatchModify(ids, ops = {}) {
+  const list = validIdList(ids, 50);
+  if (!list.length) return { error: 'no_ids' };
+  const add = validIdList(ops.addLabelIds, 10);
+  const remove = validIdList(ops.removeLabelIds, 10);
+  if (ops.unread === true && !add.includes('UNREAD')) add.unshift('UNREAD');
+  if (ops.unread === false && !remove.includes('UNREAD')) remove.unshift('UNREAD');
+  if (ops.archive === true && !remove.includes('INBOX')) remove.unshift('INBOX');
+  if (!add.length && !remove.length) return { error: 'nothing_to_do' };
+  return { ids: list, addLabelIds: add, removeLabelIds: remove };
+}
+
+/* Bulk delete payload for messages.batchDelete (IRREVERSIBLE — no server
+   undo exists; the UI confirms before calling). Same clamp contract. */
+export function buildBatchDelete(ids) {
+  const list = validIdList(ids, 50);
+  if (!list.length) return { error: 'no_ids' };
+  return { ids: list };
+}
+
+/* Calendar ids are email addresses, Google group ids or the 'primary'
+   alias — a different alphabet from Gmail's opaque tokens. Whatever does
+   not match never reaches a Google URL. */
+export function safeCalId(s) {
+  return typeof s === 'string' && /^[A-Za-z0-9_.@#-]{1,300}$/.test(s) ? s : '';
+}
+
+/* freeBusy request for the enabled calendars over a padded day window
+   (the ±1 day margin matches the calendar window so events in any UTC
+   offset are covered). `calendarIds` are format-validated, deduped and
+   capped at 10; none → ['primary']. Non-ISO dates → null (400). */
+export function buildFreebusyRequest(input = {}) {
+  const from = typeof input.from === 'string' ? input.from : '';
+  const to = typeof input.to === 'string' ? input.to : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return null;
+  const pad = expandDayRange(from, to);
+  const ids = [];
+  for (const v of Array.isArray(input.calendarIds) ? input.calendarIds : []) {
+    const id = safeCalId(v);
+    if (id && !ids.includes(id)) ids.push(id);
+    if (ids.length >= 10) break;
+  }
+  if (!ids.length) ids.push('primary');
+  return { timeMin: `${pad.from}T00:00:00Z`, timeMax: `${pad.to}T23:59:59Z`, items: ids.map(id => ({ id })) };
+}
+
+/* Busy intervals as { s, e } epoch ms. Sorted, then overlapping or
+   TOUCHING runs merged (a 09–10 and a 10–11 block are one 09–11 busy
+   stretch for the strip). Zero-length and junk entries dropped. */
+export function mergeBusyIntervals(intervals) {
+  const list = (Array.isArray(intervals) ? intervals : [])
+    .map(v => (v && Number.isFinite(v.s) && Number.isFinite(v.e) && v.e > v.s ? { s: v.s, e: v.e } : null))
+    .filter(Boolean)
+    .sort((a, b) => a.s - b.s || a.e - b.e);
+  const out = [];
+  for (const iv of list) {
+    const last = out[out.length - 1];
+    if (last && iv.s <= last.e) {
+      if (iv.e > last.e) last.e = iv.e;
+    } else out.push({ s: iv.s, e: iv.e });
+  }
+  return out;
+}
+
+/* Google freeBusy response → { busy, perCalendar }: the merged busy set
+   across every requested calendar (what the strip renders) plus the
+   per-calendar breakdown. Invalid timestamps are dropped, never NaN. */
+export function mapFreebusy(body) {
+  const perCalendar = {};
+  const all = [];
+  const cals = body && typeof body === 'object' && body.calendars && typeof body.calendars === 'object' ? body.calendars : {};
+  for (const [id, c] of Object.entries(cals)) {
+    const busy = (c && Array.isArray(c.busy) ? c.busy : [])
+      .map(b => {
+        const s = Date.parse(b && b.start);
+        const e = Date.parse(b && b.end);
+        return Number.isFinite(s) && Number.isFinite(e) && e > s ? { s, e } : null;
+      })
+      .filter(Boolean);
+    perCalendar[id] = busy;
+    all.push(...busy);
+  }
+  return { busy: mergeBusyIntervals(all), perCalendar };
+}
+
+/* Busy blocks on ONE day window [startMs, endMs): intervals overlapping
+   the window are clipped to it, fully-outside ones dropped. The strip
+   positions these against the day's local 00:00–24:00. */
+export function busyOnDay(intervals, startMs, endMs) {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return [];
+  return mergeBusyIntervals(intervals)
+    .filter(iv => iv.e > startMs && iv.s < endMs)
+    .map(iv => ({ s: Math.max(iv.s, startMs), e: Math.min(iv.e, endMs) }));
+}
+
+/* ---------- multiple calendars: calendarList + enabled set ---------- */
+
+/* calendarList.list items → the fields the surfaces need (id, name,
+   colors, primary flag, access role). Junk entries dropped; a missing
+   summary falls back to the id. */
+export function mapCalendarList(items) {
+  return (Array.isArray(items) ? items : [])
+    .filter(c => c && typeof c === 'object' && typeof c.id === 'string' && c.id)
+    .map(c => ({
+      id: c.id,
+      summary: typeof c.summary === 'string' && c.summary ? c.summary : c.id,
+      colorId: typeof c.colorId === 'string' ? c.colorId : '',
+      backgroundColor: typeof c.backgroundColor === 'string' ? c.backgroundColor : '',
+      primary: c.primary === true,
+      accessRole: typeof c.accessRole === 'string' ? c.accessRole : '',
+    }));
+}
+
+/* The enabled set actually fetched: stored ids kept in order, unknown
+   ids dropped (a deleted calendar must not break the window fetch),
+   'primary' resolved to the real primary entry for color attribution.
+   Nothing valid → ['primary'] (Google's alias, always accepted). */
+export function resolveEnabledCalendars(ids, calendars) {
+  const list = Array.isArray(calendars) ? calendars : [];
+  const byId = new Set(list.map(c => c.id));
+  const out = [];
+  for (const v of Array.isArray(ids) ? ids : []) {
+    if (typeof v !== 'string' || !v) continue;
+    let id = v;
+    if (v === 'primary') {
+      const p = list.find(c => c.primary);
+      if (!p) continue;
+      id = p.id;
+    }
+    if (byId.has(id) && !out.includes(id)) out.push(id);
+  }
+  if (!out.length) out.push('primary');
+  return out;
+}
+
+/* Event create/update/delete target: an EMPTY calendarId defaults to
+   primary; 'primary' resolves through the list; anything else must be a
+   member of the user's calendarList AND writable (owner/writer). Errors
+   answer before a single byte reaches Google: unknown_calendar,
+   invalid_calendar, calendar_read_only. No list context (fetch failed):
+   only the 'primary' alias is allowed. */
+const CAL_WRITE_ROLES = ['owner', 'writer'];
+
+export function eventCalendarTarget(rawId, calendars) {
+  const list = Array.isArray(calendars) ? calendars : [];
+  const id = rawId == null || rawId === '' ? 'primary' : String(rawId);
+  if (id === 'primary') {
+    const p = list.find(c => c.primary);
+    if (!p) return { id: 'primary' };
+    return CAL_WRITE_ROLES.includes(p.accessRole) ? { id: p.id, summary: p.summary } : { error: 'calendar_read_only' };
+  }
+  if (!safeCalId(id)) return { error: 'invalid_calendar' };
+  const c = list.find(x => x.id === id);
+  if (!c) return { error: 'unknown_calendar' };
+  if (!CAL_WRITE_ROLES.includes(c.accessRole)) return { error: 'calendar_read_only' };
+  return { id, summary: c.summary };
+}
+
+/* Per-calendar event lists → ONE array sorted by event-local start.
+   All-day events (plain date) sort before timed events on the same day
+   ('2026-10-31' < '2026-10-31T09:00…' lexicographically), matching the
+   grid's day-first convention. Stable on equal starts. */
+function eventStartKey(e) {
+  const s = (e && e.start) || {};
+  return String(s.dateTime || s.date || '');
+}
+
+export function mergeCalendarEvents(lists) {
+  const out = [];
+  for (const l of Array.isArray(lists) ? lists : []) {
+    for (const e of Array.isArray(l) ? l : []) if (e && typeof e === 'object') out.push(e);
+  }
+  return out.sort((a, b) => {
+    const ka = eventStartKey(a);
+    const kb = eventStartKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+}
+
+/* ---------- prefs.calendarIds initializer (zero-loss) ---------- */
+
+/* The workspace document predating multi-calendar support has no
+   prefs.calendarIds. This initializer runs on EVERY ingest path (trusted
+   cache, bootstrap, hydrate) and ONLY fills the missing key: a valid
+   array is kept by reference, corrupt values reset to ['primary'],
+   everything else untouched. Idempotent — the ensureCrmData pattern. */
+export function ensureGooglePrefs(prefs) {
+  if (!prefs || typeof prefs !== 'object') return prefs;
+  const ok = Array.isArray(prefs.calendarIds) && prefs.calendarIds.every(id => typeof id === 'string' && id.length > 0);
+  if (!ok) prefs.calendarIds = ['primary'];
+  return prefs;
 }
 
 /* ---------- scope display helper ---------- */

@@ -2,7 +2,7 @@
 import { MOD, ago, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { D, S, commentsOf, mem, pColor, proj, task } from '../core/store.js';
-import { googleStatus, ensureGmail } from '../core/google.js';
+import { googleStatus, ensureGmail, ensureGmailLabels, ensureGmailDrafts } from '../core/google.js';
 import { mergeInbox, safeLink } from '../../supabase/functions/_shared/google-pure.js';
 import { av, empty, fmtComment, fsize } from '../ui/helpers.js';
 import { sanitizeMailHtml } from '../core/sanitize.js';
@@ -21,7 +21,13 @@ export function pageInbox() {
   const cat = S.ui.inboxCat;
   const gcat = cat === 'gmail';
   const g = googleStatus();
-  if ((gcat || cat === 'all') && g.connected) ensureGmail(); // fetch-on-render; no-op once cached
+  if ((gcat || cat === 'all') && g.connected) {
+    ensureGmail(); // fetch-on-render; no-op once cached
+    if (gcat) {
+      ensureGmailLabels();
+      if (S.ui.gview === 'drafts') ensureGmailDrafts();
+    }
+  }
   const notifs = D()
     .notifs.slice()
     .sort((a, b) => b.at - a.at);
@@ -47,12 +53,62 @@ export function pageInbox() {
           <button class="ibtn ibtn-sm" data-a="markAllRead" data-tip="Mark all as read" aria-label="Mark all as read">${ic('check-check', 15)}</button>`
           }</div>
         <div class="tabs inbox-tabs" role="tablist">${cats.map(([k, n]) => `<button role="tab" class="tab ${cat === k ? 'on' : ''}" data-a="set" data-k="inboxCat" data-v="${k}">${n}${count(k) ? `<span class="cnt">${count(k)}</span>` : ''}</button>`).join('')}</div>
+        ${gcat && g.connected ? gmailChips() : ''}
+        ${gcat && g.connected ? gmailBulkBar() : ''}
         ${gcat && g.connected ? gmailSearchBar() : ''}
         <div class="inbox-list" data-keep="inbox-list">${gcat ? gmailList(g, gmsgs) : mergedList(rows, sel)}</div>
       </div>
       <div class="inbox-prev" style="display:flex;flex-direction:column;min-height:0;overflow-y:auto">${gsel ? gmailPreview(gsel) : gcat ? `<div class="fullstate"><div class="box"><div class="empty-state" style="padding:0"><div class="glyph">${ic('mail', 20)}</div><h2 class="es-h">Select a message</h2><p>Recent Gmail messages open here as a read-only preview.</p></div></div></div>` : sel ? inboxPreview(sel) : `<div class="fullstate"><div class="box"><div class="empty-state" style="padding:0"><div class="glyph">${ic('mail-open', 20)}</div><h2 class="es-h">Select a notification</h2><p>Read the conversation and reply without leaving your inbox.</p></div></div></div>`}</div>
     </div>
   </div>`;
+}
+
+/* ---------- Gmail chips: view + label filters ---------- */
+
+/* Session-scoped filter state: S.ui.gview ('mail' | 'drafts') and
+   S.ui.glabel ('' = the INBOX list). Selecting a chip re-arms the list
+   fetch; user labels manage inline (create, delete — system refused). */
+function gmailChips() {
+  const labels = (S.ui.glabels = S.ui.glabels || { state: 'idle', items: [] });
+  const userLabels = labels.items.filter(l => l.type === 'user');
+  const chip = (on, label, attrs, extra = '') =>
+    `<span class="row" style="gap:2px"><button type="button" class="gchip ${on ? 'on' : ''}" ${attrs}>${label}</button>${extra}</span>`;
+  const drafts = S.ui.gdrafts || { state: 'idle', items: [] };
+  const draftCount = drafts.state === 'ok' ? drafts.items.length : 0;
+  const labelChip = l =>
+    chip(
+      S.ui.gview === 'mail' && S.ui.glabel === l.id,
+      esc(l.name),
+      `data-a="gLabelChip" data-id="${esc(l.id)}"`,
+      l.type === 'user'
+        ? `<button class="ibtn ibtn-xs" data-a="gLabelDelete" data-id="${esc(l.id)}" data-tip="Delete label “${esc(l.name)}”" aria-label="Delete label ${esc(l.name)}">${ic('x', 11)}</button>`
+        : '',
+    );
+  return `<div class="row" style="padding:8px var(--gutter) 0;gap:6px;flex-wrap:wrap;align-items:center">
+    ${chip(S.ui.gview === 'mail' && !S.ui.glabel, ic('inbox', 13) + '<span>Inbox</span>', 'data-a="gMailChip"')}
+    ${chip(S.ui.gview === 'mail' && S.ui.glabel === 'STARRED', ic('star', 13) + '<span>Starred</span>', 'data-a="gLabelChip" data-id="STARRED"')}
+    ${userLabels.map(labelChip).join('')}
+    ${chip(S.ui.gview === 'drafts', ic('file', 13) + `<span>Drafts</span>${draftCount ? `<span class="cnt">${draftCount}</span>` : ''}`, 'data-a="gDraftsChip"')}
+    <button class="ibtn ibtn-xs" data-a="gLabelNew" data-tip="New label" aria-label="Create label">${ic('plus', 13)}</button>
+    ${labels.state === 'loading' ? `<span class="faint" style="font-size:11.5px" role="status">Loading labels…</span>` : ''}
+  </div>`;
+}
+
+/* ---------- Gmail bulk bar (gselSet) ---------- */
+
+/* Delete-forever has NO server undo — the copy says so; the button routes
+   through an explicit confirm dialog (actions). Trash keeps Gmail's own
+   30-day undo, so it does not need the double warning. */
+function gmailBulkBar() {
+  const n = S.ui.gselSet ? S.ui.gselSet.size : 0;
+  if (!n) return '';
+  return `<div class="bulkbar" role="toolbar" aria-label="Bulk actions"><b style="font-weight:600">${n} selected</b><span class="sep"></span>
+    <button class="btn btn-sm" data-a="gBulk" data-op="read">${ic('mail-open', 14)}Mark read</button>
+    <button class="btn btn-sm" data-a="gBulk" data-op="unread">${ic('mail', 14)}Mark unread</button>
+    <button class="btn btn-sm" data-a="gBulk" data-op="archive">${ic('archive', 14)}Archive</button>
+    <button class="btn btn-sm" data-a="gBulk" data-op="trash">${ic('trash-2', 14)}Trash</button>
+    <button class="btn btn-sm" data-a="gBulk" data-op="delete" style="color:var(--red)">${ic('trash-2', 14)}Delete forever</button>
+    <span class="sep"></span><button class="btn btn-sm" data-a="gBulkClear" aria-label="Clear selection">${ic('x', 14)}</button></div>`;
 }
 
 /* ---------- Merged 'all' list (workspace notifs + Gmail, one stream) ---------- */
@@ -81,7 +137,7 @@ function mergedList(rows, sel) {
   return err + rows.map(r => (r.kind === 'gmail' ? gmailItem(r.item, r.item.id === S.ui.gsel) : inboxItem(r.item, sel && sel.id === r.item.id))).join('');
 }
 
-/* ---------- Gmail (read-only, via google-data/gmail) ---------- */
+/* ---------- Gmail lists (mail + drafts) ---------- */
 function gmailList(g, msgs) {
   if (!g.loaded && !g.connected) return empty('mail', 'Checking Google…', 'One moment — asking whether your account is connected.', '', 'sm');
   if (!g.connected)
@@ -93,22 +149,68 @@ function gmailList(g, msgs) {
       'sm',
       3,
     );
+  if (S.ui.gview === 'drafts') return gmailDraftsList();
   if (S.ui.gSearchQ && S.ui.gSearch && S.ui.gSearch.state !== 'idle') return gmailSearchList(S.ui.gSearchQ);
   if (S.ui.gState === 'loading')
     return `<div style="padding:16px var(--gutter)" class="row muted" role="status">${ic('refresh-cw', 14)}Loading recent mail…</div>`;
   if (S.ui.gState === 'error')
     return `<div style="padding:16px var(--gutter)"><div class="alert danger">${ic('triangle-alert', 16)}<div><b>Couldn't load your Gmail.</b><div class="muted" style="margin-top:2px">${esc(S.ui.gError || 'Something went wrong.')}</div></div></div><button class="btn btn-secondary btn-sm" data-a="gRetry" style="margin-top:10px">${ic('refresh-cw', 13)}Retry</button></div>`;
   if (!msgs.length) return empty('mail', 'No recent mail', 'Your Gmail inbox is empty — messages will appear here when they arrive.', '', 'sm', 3);
-  return msgs.map(m => gmailItem(m, m.id === S.ui.gsel)).join('');
+  return msgs.map(m => gmailItem(m, m.id === S.ui.gsel, { bulk: true })).join('');
 }
-function gmailItem(m, on) {
-  return `<div class="row" style="align-items:flex-start;gap:10px;padding:12px var(--gutter);border-bottom:1px solid var(--divider);cursor:pointer;position:relative;${on ? 'background:var(--surface-2);' : ''}" data-a="gsel" data-id="${esc(m.id)}" role="button" tabindex="0">
+
+/* Drafts filter: open → the compose modal prefilled and draft-aware
+   (Send uses draft/send, further saves update the same draft). */
+function gmailDraftsList() {
+  const d = S.ui.gdrafts || { state: 'idle', items: [] };
+  if (d.state === 'loading') return `<div style="padding:16px var(--gutter)" class="row muted" role="status">${ic('refresh-cw', 14)}Loading drafts…</div>`;
+  if (d.state === 'error')
+    return `<div style="padding:16px var(--gutter)"><div class="alert danger">${ic('triangle-alert', 16)}<div><b>Couldn't load your drafts.</b><div class="muted" style="margin-top:2px">${esc(d.error || 'Something went wrong.')}</div></div></div><button class="btn btn-secondary btn-sm" data-a="gDraftsChip" style="margin-top:10px">${ic('refresh-cw', 13)}Retry</button></div>`;
+  if (!d.items.length) return empty('file', 'No drafts', 'Compose a message and hit Save draft — unfinished mail waits here.', '', 'sm', 3);
+  return d.items
+    .map(m => {
+      const on = S.ui.compose?.draftId === m.id;
+      return `<div class="row" style="align-items:flex-start;gap:10px;padding:12px var(--gutter);border-bottom:1px solid var(--divider);cursor:pointer;position:relative;${on ? 'background:var(--surface-2);' : ''}" data-a="gDraftOpen" data-id="${esc(m.id)}" role="button" tabindex="0">
+      <span class="av md" style="--c:var(--amber)" aria-hidden="true">${ic('file', 13)}</span>
+      <div class="grow" style="font-size:13px;line-height:1.45;min-width:0">
+        <div class="row" style="gap:8px"><span class="trunc ${on ? 'muted' : ''}" style="${on ? '' : 'font-weight:600'}">${esc(m.subject)}</span><span class="sp"></span><span class="faint" style="font-size:11.5px;flex-shrink:0">${m.date ? ago(m.date) : ''}</span></div>
+        <div class="trunc muted" style="font-size:12.5px;margin-top:1px">${m.to ? `To ${esc(m.to)}` : '<span class="faint">No recipients yet</span>'}</div>
+        <div class="trunc muted" style="font-size:12.5px;margin-top:2px">${esc(m.snippet || m.body?.body || '')}</div>
+      </div>
+      <button class="ibtn ibtn-xs" data-a="gDraftDelete" data-id="${esc(m.id)}" data-tip="Delete draft" aria-label="Delete draft">${ic('trash-2', 13)}</button>
+    </div>`;
+    })
+    .join('');
+}
+
+/* A row renders a bulk checkbox ONLY inside the gmail category (the bulk
+   bar lives there); the star works everywhere (All view included).
+   Nested [data-a] targets dispatch their own action — the checkbox never
+   opens the message. */
+function gmailItem(m, on, opt = {}) {
+  const selected = S.ui.gselSet ? S.ui.gselSet.has(m.id) : false;
+  const names = (S.ui.glabels && S.ui.glabels.items) || [];
+  const nameOf = id => {
+    const l = names.find(x => x.id === id);
+    return l ? l : { id, name: id, type: 'system' };
+  };
+  const badges = (m.labels || [])
+    .filter(id => id !== 'INBOX' && id !== 'UNREAD' && !id.startsWith('CATEGORY_') && !id.startsWith('GOOGR'))
+    .slice(0, 3)
+    .map(id => {
+      const l = nameOf(id);
+      return `<span class="lblbadge ${l.type === 'system' ? 'sys' : ''}" title="${esc(l.name)}">${esc(l.name)}</span>`;
+    })
+    .join('');
+  return `<div class="row" style="align-items:flex-start;gap:10px;padding:12px var(--gutter);border-bottom:1px solid var(--divider);cursor:pointer;position:relative;${on || selected ? 'background:var(--surface-2);' : ''}" data-a="gsel" data-id="${esc(m.id)}" role="button" tabindex="0">
     ${m.unread ? '<span style="position:absolute;left:6px;top:22px;width:6px;height:6px;border-radius:50%;background:var(--accent)" aria-label="Unread"></span>' : ''}
-    <span class="av md" style="--c:var(--red)" aria-hidden="true">${ic('mail', 13)}</span>
+    ${opt.bulk ? `<input type="checkbox" class="check" ${selected ? 'checked' : ''} data-a="gSelRow" data-id="${esc(m.id)}" aria-label="Select message from ${esc(m.from)}" style="margin-top:4px">` : ''}
+    <button type="button" class="ibtn ibtn-xs" data-a="gStar" data-id="${esc(m.id)}" data-tip="${m.starred ? 'Remove star' : 'Add star'}" aria-label="${m.starred ? 'Remove star' : 'Add star'}" style="margin-top:3px;${m.starred ? 'color:#F4B400' : ''}">${ic('star', 14)}</button>
     <div class="grow" style="font-size:13px;line-height:1.45;min-width:0">
       <div class="row" style="gap:8px"><span class="trunc" style="${m.unread ? 'font-weight:600' : ''}">${esc(m.from)}</span><span class="sp"></span><span class="faint" style="font-size:11.5px;flex-shrink:0">${m.date ? ago(m.date) : ''}</span></div>
       <div class="trunc" style="margin-top:1px;${m.unread ? 'font-weight:600' : ''}">${esc(m.subject)}</div>
       <div class="trunc muted" style="font-size:12.5px;margin-top:2px">${esc(m.snippet)}</div>
+      ${badges ? `<div class="row" style="gap:4px;margin-top:5px;flex-wrap:wrap">${badges}</div>` : ''}
     </div>
   </div>`;
 }
@@ -168,6 +270,7 @@ function attachRow(m) {
 function gmsgActions(m) {
   return `<div class="row" style="gap:6px;margin:14px 0 4px">
     <button class="btn btn-primary btn-sm" data-a="gReply" data-id="${esc(m.id)}">${ic('reply', 13)}Reply</button>
+    <button class="btn btn-secondary btn-sm" data-a="gStar" data-id="${esc(m.id)}">${ic('star', 13)}${m.starred ? 'Unstar' : 'Star'}</button>
     <button class="btn btn-secondary btn-sm" data-a="gMarkUnread" data-id="${esc(m.id)}">${ic('mail', 13)}Mark unread</button>
     <button class="btn btn-secondary btn-sm" data-a="gArchive" data-id="${esc(m.id)}">${ic('archive', 13)}Archive</button>
     <button class="btn btn-danger-ghost btn-sm" data-a="gTrash" data-id="${esc(m.id)}">${ic('trash-2', 13)}Trash</button>
@@ -191,6 +294,17 @@ function gmailPreview(m) {
   const threadId = msg && msg.threadId;
   const th = threadId ? (S.ui.gthread = S.ui.gthread || {})[threadId] : null;
   const openSet = (S.ui.gOpen = S.ui.gOpen || new Set());
+  /* Label badges: names resolved against the cached labels list; unknown
+     ids degrade to their own id (system-styled). */
+  const names = (S.ui.glabels && S.ui.glabels.items) || [];
+  const badgeRow = (msg?.labels || m.labels || [])
+    .filter(id => id !== 'INBOX' && id !== 'UNREAD' && !id.startsWith('CATEGORY_') && !id.startsWith('GOOGR'))
+    .slice(0, 6)
+    .map(id => {
+      const l = names.find(x => x.id === id) || { id, name: id, type: 'system' };
+      return `<span class="lblbadge ${l.type === 'system' ? 'sys' : ''}">${esc(l.name)}</span>`;
+    })
+    .join('');
   /* Body area: loading / error / single body / thread cards. */
   let bodyArea;
   if (!deep || deep.state === 'loading')
@@ -212,6 +326,7 @@ function gmailPreview(m) {
     <div style="padding:20px 28px;max-width:760px;width:100%">
       <h2 style="font-size:var(--fs-xl);margin:0 0 10px;font-weight:600;letter-spacing:-.015em">${esc(m.subject)}</h2>
       <div class="row" style="gap:10px;margin-bottom:14px;font-size:13px">${m.unread ? '<span class="badge accent">Unread</span>' : ''}<b style="font-weight:500">${esc(m.from)}</b>${m.email ? `<span class="muted">&lt;${esc(m.email)}&gt;</span>` : ''}<span class="sp"></span><span class="muted" style="font-size:12.5px">${d ? esc(d.toLocaleString()) : ''}</span></div>
+      ${badgeRow ? `<div class="row" style="gap:4px;margin:-6px 0 12px;flex-wrap:wrap">${badgeRow}</div>` : ''}
       ${msg && msg.to ? `<div class="row faint" style="font-size:12px;margin-bottom:12px">to ${esc(msg.to)}</div>` : ''}
       ${bodyArea}
       <p class="faint" style="font-size:12px;margin-top:18px">Replies, archiving and trash act on this message in your Gmail. Attachments download straight from your account.</p>

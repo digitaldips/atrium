@@ -228,6 +228,8 @@ test('mapGmailMessage maps a metadata payload into the UI shape', () => {
     snippet: 'Hello from the snippet',
     date: 1761907200000,
     unread: true,
+    starred: false,
+    labels: ['INBOX', 'UNREAD', 'CATEGORY_PERSONAL'],
     webLink: 'https://mail.google.com/mail/u/0/#inbox/msg-1',
   });
 });

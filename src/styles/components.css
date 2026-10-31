@@ -581,6 +581,57 @@
   height: 18px;
   color: var(--text-2);
 }
+/* Gmail filter chips (Inbox / Starred / labels / Drafts) + label badges */
+.gchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.gchip:hover {
+  border-color: var(--text-3);
+  color: var(--text);
+}
+.gchip.on {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--text);
+}
+.gchip .cnt {
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-weight: 500;
+}
+.lblbadge {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 500;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  max-width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lblbadge.sys {
+  background: transparent;
+  border-style: dashed;
+  color: var(--text-3);
+}
 .pillbtn {
   display: inline-flex;
   align-items: center;

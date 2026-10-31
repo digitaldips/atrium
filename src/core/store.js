@@ -4,6 +4,7 @@ import { PCOLORS, TEAMS_SEED } from './constants.js';
 import { seed } from '../data/seed.js';
 import { ensureCrmData } from './crm.js';
 import { sb, getCurrentUser, setCurrentUser } from './supabase.js';
+import { ensureGooglePrefs } from '../../supabase/functions/_shared/google-pure.js';
 import {
   applyUserIdentity,
   buildDocPayload,
@@ -34,6 +35,7 @@ export const DEFAULT_PREFS = {
   openTasks: 'drawer',
   name: 'Tanjim Islam',
   title: 'Head of Product',
+  calendarIds: ['primary'],
 };
 /* ---------- offline cache (localStorage) ---------- */
 /* Invariant: the cache at STORE_KEY belongs to exactly one account — the
@@ -93,6 +95,10 @@ export const S = {
     inboxCat: 'all',
     inboxUnread: false,
     inboxSel: null,
+    gselSet: new Set(),
+    gview: 'mail',
+    glabel: '',
+    compose: { draftId: null },
     notifFilter: 'all',
     settings: 'appearance',
     searchQ: '',
@@ -144,6 +150,7 @@ export function save() {
 export function bindCacheToUser(userId) {
   if (isTrustedCache(saved, userId)) {
     ensureCrmData(S.data);
+    ensureGooglePrefs(S.prefs);
     return true;
   }
   S.data = seed();
@@ -185,6 +192,7 @@ export async function hydrateWorkspace(session) {
       S.prefs = { ...DEFAULT_PREFS };
       applyUserIdentity(S, session.user);
       ensureCrmData(S.data);
+      ensureGooglePrefs(S.prefs);
       await upsertWorkspaceDoc(sb, session.user.id, buildDocPayload(S.data, S.prefs, S.views), D().ws?.name);
       save();
       return 'bootstrapped';
@@ -195,8 +203,10 @@ export async function hydrateWorkspace(session) {
     S.views = doc.views || {};
     /* CRM migration: docs created before the CRM feature lack clients/deals.
        ensureCrmData only fills missing arrays — existing content is untouched
-       (zero-loss), and save() below persists the initialized doc. */
+       (zero-loss), and save() below persists the initialized doc. Same
+       pattern for prefs.calendarIds (multi-calendar feature). */
     ensureCrmData(S.data);
+    ensureGooglePrefs(S.prefs);
     save();
     return 'loaded';
   } catch (err) {
