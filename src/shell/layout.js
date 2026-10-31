@@ -19,6 +19,7 @@ import { pagePipeline } from '../pages/pipeline.js';
 import { pageMember, pageMembers, pageTeam, pageTeams } from '../pages/members.js';
 import { pageActivity } from '../pages/activity.js';
 import { pageSearch } from '../pages/search.js';
+import { pageNotes } from '../pages/notes.js';
 import { page404, stateFailed } from '../pages/errors.js';
 import { pageProject } from '../pages/project.js';
 import { pageWsCalendar } from '../views/calendar.js';
@@ -50,6 +51,7 @@ export function renderPage() {
       favorites: pageFavorites,
       notifications: pageNotifications,
       search: pageSearch,
+      notes: pageNotes,
       overview: pageOverview,
       projects: pageProjects,
       project: pageProject,
@@ -105,6 +107,7 @@ export function renderSidebar() {
       ${sItem('mytasks', 'My Tasks', 'circle-check', { ct: myOpen || '' })}
       ${sItem('favorites', 'Favorites', 'star')}
       ${sItem('notifications', 'Notifications', 'bell', { ct: unreadAll || '' })}
+      ${sItem('notes', 'Notes', 'notebook-pen', { ct: (d.notes || []).length || '' })}
       <div class="sgroup">
         <div class="sgroup-h">Workspace</div>
         ${sItem('overview', 'Overview', 'layout-dashboard')}

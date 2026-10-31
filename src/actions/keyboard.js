@@ -14,6 +14,13 @@ document.addEventListener('keydown', e => {
   const typing = t.matches?.('input, textarea, select, [contenteditable="true"]');
   const pl = S.ui.palette;
   if (mod && e.key.toLowerCase() === 'k') {
+    /* Inside the note editor Cmd/Ctrl+K is the link prompt (AC3), not the
+       palette — the editor routes it to the link popover instead. */
+    if (t.closest?.('#note-editor')) {
+      e.preventDefault();
+      A.noteLinkCmd?.();
+      return;
+    }
     e.preventDefault();
     pl ? A.closePalette() : A.openPalette();
     return;

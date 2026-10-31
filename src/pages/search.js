@@ -2,11 +2,12 @@
 import { ago, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { D, S, allTasks, canSee, mem, pColor, proj, task, visibleProjects } from '../core/store.js';
+import { noteSnippet, noteTitleFromHtml, searchNotes } from '../core/notes.js';
 import { FT, av, empty, hl, pIcon, pStatus, stIcon } from '../ui/helpers.js';
 
 export function searchAll(q) {
   q = (q || '').trim().toLowerCase();
-  if (!q) return { tasks: [], projects: [], people: [], files: [], comments: [] };
+  if (!q) return { tasks: [], projects: [], people: [], files: [], comments: [], notes: [] };
   const has = s => (s || '').toLowerCase().includes(q);
   return {
     tasks: allTasks()
@@ -16,6 +17,7 @@ export function searchAll(q) {
     people: D().members.filter(m => has(m.name) || has(m.email) || has(m.title)),
     files: D().files.filter(f => has(f.name) && canSee(proj(f.project))),
     comments: D().comments.filter(c => has(c.text) && task(c.task) && canSee(proj(task(c.task).project))),
+    notes: searchNotes(D().notes || [], q),
   };
 }
 export function pageSearch() {
@@ -29,6 +31,7 @@ export function pageSearch() {
     ['people', 'People'],
     ['files', 'Files'],
     ['comments', 'Comments'],
+    ['notes', 'Notes'],
   ];
   const total = Object.values(r).reduce((a, b) => a + b.length, 0);
   const sec = (k, title, html) =>
@@ -91,6 +94,16 @@ export function pageSearch() {
                 .map(
                   c =>
                     `<div class="mini" style="align-items:flex-start;padding-top:10px;padding-bottom:10px" data-a="openTask" data-id="${c.task}">${av(c.by, 'sm')}<div class="grow" style="min-width:0"><div style="font-size:12px" class="muted"><b style="color:var(--text);font-weight:500">${esc(mem(c.by).name)}</b> on ${esc(task(c.task).title)} · ${ago(c.at)}</div><div style="font-size:13px">${hl(c.text, q)}</div></div></div>`,
+                )
+                .join(''),
+            ) +
+            sec(
+              'notes',
+              'Notes',
+              r.notes
+                .map(
+                  n =>
+                    `<div class="mini" data-a="noteOpen" data-id="${esc(n.id)}"><span class="ftype" style="--c:var(--accent)">${ic('notebook-pen', 14)}</span><span class="tt">${hl(n.title || noteTitleFromHtml(n.html) || 'Untitled note', q)}</span><span class="faint" style="font-size:12px">${ago(n.updated)}</span><div class="trunc muted" style="font-size:12.5px;flex-basis:100%">${hl(noteSnippet(n.html), q)}</div></div>`,
                 )
                 .join(''),
             )

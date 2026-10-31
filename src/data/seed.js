@@ -1,6 +1,7 @@
 /* ---------- seed data ---------- */
 import { dOff, minsAgo, uid } from '../core/utils.js';
 import { crmSeedClients, crmSeedDeals } from '../core/crm.js';
+import { notesSeed } from '../core/notes.js';
 
 export function seed() {
   const members = [
@@ -510,6 +511,7 @@ export function seed() {
     clients: crmSeedClients(),
     deals: crmSeedDeals(),
     links: [],
+    notes: notesSeed(),
     projects,
     tasks: T,
     comments,

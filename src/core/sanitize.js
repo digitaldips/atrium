@@ -60,12 +60,29 @@ DOMPurify.addHook('afterSanitizeAttributes', node => {
 
 const URI_RE = /^(?:mailto:|(?:https?|tel):|^data:image\/(?:png|jpe?g|gif|webp);|^#)/i;
 
+/* Shared profile: both mail bodies and note bodies pass exactly this
+   posture (html profile + FORBID list + attribute strip + URI allowlist).
+   Notes get the same door as mail, nothing looser: scripts and event
+   handlers never survive the html profile, <style>/form/iframe et al are
+   FORBIDDEN, style attributes are dropped by the hook, and hrefs may
+   only be http/https/mailto/tel/data-image/fragment. */
+const SANITIZE_OPTS = {
+  USE_PROFILES: { html: true },
+  FORBID_TAGS,
+  FORBID_ATTR: ['style', 'background', 'srcset'],
+  ALLOWED_URI_REGEXP: URI_RE,
+};
+
 export function sanitizeMailHtml(html) {
   if (typeof html !== 'string' || !html) return '';
-  return DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true },
-    FORBID_TAGS,
-    FORBID_ATTR: ['style', 'background', 'srcset'],
-    ALLOWED_URI_REGEXP: URI_RE,
-  });
+  return DOMPurify.sanitize(html, SANITIZE_OPTS);
+}
+
+/* Notes profile — identical posture, own export so the notes render/save
+   paths read explicitly. The saved html is sanitized AGAIN here (defense
+   in depth: the doc could hold bytes written by an older client, a sync
+   or a bug — render never trusts it). */
+export function sanitizeNoteHtml(html) {
+  if (typeof html !== 'string' || !html) return '';
+  return DOMPurify.sanitize(html, SANITIZE_OPTS);
 }

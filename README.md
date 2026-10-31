@@ -55,7 +55,8 @@ vite.config.js          Vite config, including the Lucide icon-subset plugin
 eslint.config.js        lint rules (ESLint flat config); formatting by Prettier (.prettierrc.json)
 .github/workflows/      CI: lint, format check, build
 docs/preview.png        README screenshot
-supabase/migrations/    0001_atrium_init.sql: workspaces + workspace_members, RLS, ACLs
+supabase/migrations/    0001 workspaces + members (RLS, ACLs), 0002 user_integrations (service-role only),
+                        0003 oauth state columns, 0004 notes attachment storage (private 'atrium' bucket + owner-scoped RLS)
 test/                   node --test suite for the pure data layer (fake client, no network)
 src/
   main.js               entry: imports styles and modules, then boots behind the auth gate
@@ -66,12 +67,14 @@ src/
     views/              list, board, table, calendar, timeline, projects & files
     pages/              settings, auth & onboarding
   core/                 utilities, constants, icons, store (state + lookups), theme,
-                        supabase.js (client wrapper) + workspace-api.js (pure data layer)
+                        supabase.js (client wrapper) + workspace-api.js (pure data layer),
+                        crm.js / links.js / notes.js (pure doc-layer modules),
+                        sanitize.js (DOMPurify profiles for mail and notes HTML)
   data/seed.js          seed workspace data used on first login
   ui/                   shared render helpers, toasts, the select dropdown
   shell/                render loop and router, sidebar/topbar layout, skeletons, view engine
   components/           task list renderer
-  pages/                one module per route
+  pages/                one module per route (including notes.js: two-pane Notes + WYSIWYG)
   views/                project views: board, table, calendar, timeline, files, overview
   overlays/             task drawer, modals, popovers, context menu, command palette
   features/             teams, subtasks, archive (rendering)
@@ -116,6 +119,36 @@ Atrium connects to one Google account per signed-in user (Gmail read/send/modify
 * **Mail HTML is rendered, not trusted.** Message bodies pass through
   DOMPurify (`src/core/sanitize.js`) — the only door for Gmail HTML into the
   DOM. Everything else (senders, subjects, snippets, label names) is escaped.
+
+## Notes
+
+Notes are rich-text documents that live inside the workspace document
+(`doc.notes[]`, same model as clients/deals/links — no extra tables):
+
+- **Editor:** a dependency-free `contenteditable` surface with a toolbar
+  (bold/italic/underline/strikethrough, H2/H3, lists, quote, code block,
+  link, remove formatting, undo/redo) built on `document.execCommand`.
+  `execCommand` is deprecated but universally supported; if editing needs
+  outgrow it, the upgrade path is swapping the editor pane for Tiptap or
+  ProseMirror behind the same `note.html` shape — no data migration needed.
+- **Sanitization:** note HTML passes DOMPurify on every save and again on
+  every render (`sanitizeNoteHtml`, same FORBID posture as mail bodies).
+  Pasted HTML is sanitized at paste time too, so pasted markup never
+  live-renders raw.
+- **Autosave:** every keystroke updates the in-memory doc with sanitized
+  HTML (renders are always lossless); persistence runs through the normal
+  debounced `save()` pipeline on a ~1 s debounce, flushed on note switch
+  and tab hide.
+- **Attachments:** files up to 10 MB upload to the private `atrium`
+  Storage bucket via supabase-js with the signed-in user's JWT. Object
+  paths are `<userId>/<noteId>/<filename>`; a single storage.objects RLS
+  policy scopes every operation (select/insert/update/delete, signed URLs
+  included) to the caller's own uid prefix, and downloads go through
+  short-expiry (5 min) signed URLs. The repo migration
+  `supabase/migrations/0004_notes_storage.sql` creates the bucket
+  idempotently for fresh clones.
+- **Integration:** the global search page matches note titles and text;
+  the Home dashboard shows a Pinned notes panel whenever a note is pinned.
 
 ## Continuous integration
 

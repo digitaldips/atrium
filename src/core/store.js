@@ -4,6 +4,7 @@ import { PCOLORS, TEAMS_SEED } from './constants.js';
 import { seed } from '../data/seed.js';
 import { ensureCrmData } from './crm.js';
 import { ensureDocShape } from './links.js';
+import { ensureNotes } from './notes.js';
 import { sb, getCurrentUser, setCurrentUser } from './supabase.js';
 import { ensureGooglePrefs } from '../../supabase/functions/_shared/google-pure.js';
 import {
@@ -152,6 +153,7 @@ export function bindCacheToUser(userId) {
   if (isTrustedCache(saved, userId)) {
     ensureCrmData(S.data);
     ensureDocShape(S.data); // links[] (CRM linkage) — zero-loss, same contract
+    ensureNotes(S.data); // notes[] (Notes module) — zero-loss, same contract
     ensureGooglePrefs(S.prefs);
     return true;
   }
@@ -195,6 +197,7 @@ export async function hydrateWorkspace(session) {
       applyUserIdentity(S, session.user);
       ensureCrmData(S.data);
       ensureDocShape(S.data);
+      ensureNotes(S.data);
       ensureGooglePrefs(S.prefs);
       await upsertWorkspaceDoc(sb, session.user.id, buildDocPayload(S.data, S.prefs, S.views), D().ws?.name);
       save();
@@ -207,10 +210,11 @@ export async function hydrateWorkspace(session) {
     /* CRM migration: docs created before the CRM feature lack clients/deals.
        ensureCrmData only fills missing arrays — existing content is untouched
        (zero-loss), and save() below persists the initialized doc. Same
-       pattern for prefs.calendarIds (multi-calendar feature) and links[]
-       (CRM linkage: mail/event/task rows). */
+       pattern for prefs.calendarIds (multi-calendar feature), links[]
+       (CRM linkage: mail/event/task rows) and notes[] (Notes module). */
     ensureCrmData(S.data);
     ensureDocShape(S.data);
+    ensureNotes(S.data);
     ensureGooglePrefs(S.prefs);
     save();
     return 'loaded';
@@ -264,6 +268,7 @@ export const commentsOf = tid => D().comments.filter(c => c.task === tid);
 export const crmClients = () => D().clients || [];
 export const crmDeals = () => D().deals || [];
 export const crmLinks = () => D().links || [];
+export const noteById = id => (D().notes || []).find(n => n && n.id === id);
 export const client = id => crmClients().find(c => c.id === id);
 export const deal = id => crmDeals().find(d => d.id === id);
 export function progressOf(pid) {

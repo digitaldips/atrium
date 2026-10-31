@@ -1,10 +1,11 @@
 /* ---------- HOME ---------- */
-import { DAY, MONL, TODAY, WDL, diffD, esc, fmtDate, parse } from '../core/utils.js';
+import { DAY, MONL, TODAY, WDL, ago, diffD, esc, fmtDate, parse } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { D, S, allTasks, canSee, isOver, pColor, progressOf, proj, visibleProjects } from '../core/store.js';
 import { av, avStack, empty, pIcon, pStatus, prIcon, progBar } from '../ui/helpers.js';
 import { sortTasks } from '../shell/view-engine.js';
 import { actHtml, miniRow } from '../components/task-list.js';
+import { UNTITLED, noteTitleFromHtml, sortNotes } from '../core/notes.js';
 
 export function pageHome() {
   const h = new Date().getHours();
@@ -36,6 +37,9 @@ export function pageHome() {
     return { lab, ts };
   };
   const dls = [dl('Today', 0, 0), dl('Tomorrow', 1, 1), dl('This week', 2, 7)];
+  /* Pinned notes (AC5): the optional Home surface. It renders ONLY when at
+     least one note is pinned, so it never adds noise to a fresh workspace. */
+  const pinned = sortNotes((D().notes || []).filter(n => n && n.pinned)).slice(0, 4);
   return `<div class="page">
     <div class="ph"><div><h1>${greet}, ${esc(S.prefs.name.split(' ')[0])}</h1><p><span class="num">${WDL[TODAY.getDay()]}, ${MONL[TODAY.getMonth()]} ${TODAY.getDate()}</span> · Here's what's happening across your workspace.</p></div>
       <div class="acts"><button class="btn btn-secondary hide-m" data-a="invite">${ic('user-plus', 14)}Invite member</button><button class="btn btn-secondary hide-m" data-a="newProject">${ic('folder-plus', 14)}New project</button><button class="btn btn-primary" data-a="newTask">${ic('plus', 14)}New task</button></div></div>
@@ -98,6 +102,19 @@ export function pageHome() {
             .join('')}
           </div>
         </section>
+        ${
+          pinned.length
+            ? `<section class="panel">
+          <div class="panel-h"><h2>Pinned notes</h2><div class="acts"><button class="btn btn-sm btn-ghost" data-a="go" data-r="notes">All notes</button></div></div>
+          <div class="panel-b" style="padding-bottom:6px">${pinned
+            .map(
+              n =>
+                `<div class="row" style="height:30px;cursor:pointer;gap:8px;font-size:13px" data-a="noteOpen" data-id="${esc(n.id)}"><span style="color:var(--accent);display:inline-flex">${ic('pin', 13)}</span><span class="trunc grow">${esc(n.title || noteTitleFromHtml(n.html) || UNTITLED)}</span><span class="faint" style="font-size:11.5px">${ago(n.updated)}</span></div>`,
+            )
+            .join('')}</div>
+        </section>`
+            : ''
+        }
         <section class="panel">
           <div class="panel-h"><h2>Recent activity</h2><div class="acts"><button class="btn btn-sm btn-ghost" data-a="go" data-r="activity">View all</button></div></div>
           <div class="panel-b feed lined">${D()
