@@ -36,8 +36,10 @@ export const DEFAULT_PREFS = {
   motion: 'system',
   home: 'home',
   openTasks: 'drawer',
-  name: 'Tanjim Islam',
-  title: 'Head of Product',
+  /* Neutral placeholders; applyUserIdentity stamps the account's real
+     name at bootstrap. Title stays empty until the user sets one. */
+  name: 'You',
+  title: '',
   calendarIds: ['primary'],
 };
 /* ---------- offline cache (localStorage) ---------- */

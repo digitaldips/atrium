@@ -269,33 +269,3 @@ export function noteSafeLinkUrl(url) {
     return '';
   }
 }
-
-/* ---------- fictional seed sample (fresh workspaces only) ---------- */
-/* Clearly fictional: the note says in plain words that it is a sample.
-   It demonstrates every editor construct (heading, list, quote, code
-   block, link) so new workspaces see what the editor produces, and it is
-   pinned so the pin-first ordering is visible on day one. */
-const cOff = days => Date.now() - days * 864e5;
-
-export function notesSeed() {
-  return [
-    makeNote({
-      id: 'n1',
-      title: 'Welcome to Notes',
-      created: cOff(2),
-      updated: cOff(1),
-      pinned: true,
-      attachments: [],
-      html: [
-        '<h2>This is a sample note</h2>',
-        '<p>Everything here is <b>fictional demo content</b> — delete it whenever you like. Notes autosave as you type and live inside your workspace document.</p>',
-        '<p><b>Formatting</b> you can use: <i>italic</i>, <u>underline</u>, <s>strikethrough</s>, headings, quotes and code.</p>',
-        '<h3>What Notes can hold</h3>',
-        '<ul><li>Meeting agendas and action items</li><li>Drafts of client emails</li><li>Any document, with <b>file attachments</b> up to 10&nbsp;MB each</li></ul>',
-        '<blockquote>Pin a note to keep it at the top of the list.</blockquote>',
-        '<pre><code>cd ~/atrium &amp;&amp; npm run dev</code></pre>',
-        '<p>Docs live at <a href="https://example.com/atrium-handbook" target="_blank" rel="noopener noreferrer nofollow">the (fictional) handbook</a>.</p>',
-      ].join(''),
-    }),
-  ];
-}

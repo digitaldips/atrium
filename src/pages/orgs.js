@@ -113,7 +113,7 @@ export function orgFormHtml(m, H) {
   const err = S.ui.errors.orgName;
   return `${H(m.edit ? 'Edit organisation' : 'New organisation', m.edit ? '' : 'A company that groups contacts, deals and notes.')}
   <form class="modal-b" data-submit="submitOrg" style="gap:12px">
-    <div class="field"><label class="label" for="o-name">Name</label><input class="input ${err ? 'is-error' : ''}" id="o-name" data-in="orgForm" data-f="name" value="${esc(f.name || '')}" placeholder="e.g. Noorderlicht Group" autofocus aria-invalid="${!!err}">${err ? `<span class="err">${ic('circle-alert', 12)}${err}</span>` : ''}</div>
+    <div class="field"><label class="label" for="o-name">Name</label><input class="input ${err ? 'is-error' : ''}" id="o-name" data-in="orgForm" data-f="name" value="${esc(f.name || '')}" placeholder="e.g. Acme Inc." autofocus aria-invalid="${!!err}">${err ? `<span class="err">${ic('circle-alert', 12)}${err}</span>` : ''}</div>
     <div class="row" style="gap:12px;flex-wrap:wrap">
       <div class="field grow" style="min-width:180px"><label class="label" for="o-domain">Domain</label><input class="input" id="o-domain" data-in="orgForm" data-f="domain" value="${esc(f.domain || '')}" placeholder="company.com — matches client email domains"><span class="hint">Used to suggest contacts whose email ends in this domain. Exact match only.</span></div>
       <div class="field grow" style="min-width:150px"><label class="label" for="o-industry">Industry</label><input class="input" id="o-industry" data-in="orgForm" data-f="industry" value="${esc(f.industry || '')}" placeholder="Optional"></div>

@@ -7,8 +7,6 @@ import {
   CRM_STAGES,
   CLIENT_STATUSES,
   activeClientCount,
-  crmSeedClients,
-  crmSeedDeals,
   dealTotals,
   ensureCrmData,
   eur,
@@ -164,48 +162,6 @@ test('eur formats whole euros with thousands separators', () => {
   assert.equal(eur(92500), '€92,500');
   assert.equal(eur(1000000), '€1,000,000');
   assert.equal(eur('nope'), '€0', 'non-numeric values format as zero, not NaN');
-});
-
-/* ---------- AC1: fictional seed samples ---------- */
-
-test('crmSeedClients returns three clearly fictional clients with full shape', () => {
-  const clients = crmSeedClients();
-  assert.equal(clients.length, 3);
-  const names = clients.map(c => c.name);
-  assert.deepEqual(names, ['Van der Berg Architects', 'Meridian Fitness', 'Koffie & Co']);
-  for (const c of clients) {
-    assert.equal(typeof c.id, 'string');
-    assert.equal(typeof c.company, 'string');
-    assert.match(c.email, /@/);
-    assert.equal(typeof c.phone, 'string');
-    assert.ok(
-      CLIENT_STATUSES.some(s => s.id === c.status),
-      'status must be a known client status',
-    );
-    assert.equal(typeof c.notes, 'string');
-    assert.equal(typeof c.created, 'number');
-  }
-});
-
-test('crmSeedDeals returns four deals across stages, all linked to seeded clients', () => {
-  const clients = crmSeedClients();
-  const deals = crmSeedDeals();
-  assert.equal(deals.length, 4);
-  const ids = new Set(clients.map(c => c.id));
-  const stages = new Set(deals.map(d => d.stage));
-  assert.ok(stages.has('lead'));
-  assert.ok(stages.has('qualified'));
-  assert.ok(stages.has('proposal'));
-  assert.ok(stages.has('won'));
-  for (const d of deals) {
-    assert.ok(ids.has(d.client), 'deal.client must reference a seeded client');
-    assert.ok(isKnownStage(d.stage));
-    assert.equal(typeof d.value, 'number');
-    assert.equal(typeof d.title, 'string');
-    assert.equal(typeof d.notes, 'string');
-    assert.match(d.close || '', /^\d{4}-\d{2}-\d{2}$/);
-    assert.equal(typeof d.created, 'number');
-  }
 });
 
 /* --- value sanitizer (review fix 3) --- */

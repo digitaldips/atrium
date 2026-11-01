@@ -1984,7 +1984,7 @@ A.delWorkspace = () =>
       save();
       S.ui.auth = 'login';
       render();
-      toast('Workspace deleted. Demo data was restored for this prototype.', { kind: 'info', ms: 5000 });
+      toast('Workspace deleted. Sign in again to start with a fresh, empty workspace.', { kind: 'info', ms: 5000 });
     },
   });
 A.avColor = el => {

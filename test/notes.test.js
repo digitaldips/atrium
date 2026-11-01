@@ -20,7 +20,6 @@ import {
   noteSafeLinkUrl,
   noteSnippet,
   noteTitleFromHtml,
-  notesSeed,
   removeNote,
   searchNotes,
   sortNotes,
@@ -482,21 +481,4 @@ test('ensureNotes row normalization is idempotent', () => {
   const once = JSON.stringify(doc);
   ensureNotes(doc);
   assert.equal(JSON.stringify(doc), once, 'second run changes nothing');
-});
-
-/* ---------- seed ---------- */
-
-test('notesSeed returns one clearly-fictional sample note demonstrating editor output', () => {
-  const s = notesSeed();
-  assert.equal(s.length, 1);
-  const n = s[0];
-  assert.ok(n.id && n.title, 'id + title present');
-  assert.ok(n.html.includes('<h2>'), 'demonstrates a heading');
-  assert.ok(n.html.includes('<ul>'), 'demonstrates a bullet list');
-  assert.ok(n.html.includes('<blockquote>'), 'demonstrates a quote');
-  assert.ok(n.html.includes('<pre>'), 'demonstrates a code block');
-  assert.ok(n.html.includes('href="https://'), 'demonstrates a link');
-  assert.equal(n.pinned, true, 'sample note is pinned so the pin-first order is visible');
-  assert.deepEqual(n.attachments, []);
-  assert.ok(/fictional|sample|demo/i.test(n.html), 'the note says in plain words that it is a sample');
 });

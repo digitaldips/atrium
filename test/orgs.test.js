@@ -5,8 +5,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SEED_ORG_ID,
-  crmSeedWithOrgs,
   emailDomainOf,
   ensureOrgsData,
   makeOrg,
@@ -18,7 +16,6 @@ import {
   orgDealsFor,
   orgListRow,
   orgNotesFor,
-  orgSeed,
   orgSuggestionFor,
   orgSuggestionsForClients,
 } from '../src/core/orgs.js';
@@ -322,43 +319,4 @@ test('orgCascadeUnlink is idempotent and junk-safe', () => {
   assert.deepEqual(orgCascadeUnlink({}, 'org1'), { clients: 0, deals: 0, notes: 0 });
   assert.deepEqual(orgCascadeUnlink(null, 'org1'), { clients: 0, deals: 0, notes: 0 });
   assert.deepEqual(orgCascadeUnlink({ clients: [{}] }, ''), { clients: 0, deals: 0, notes: 0 });
-});
-
-/* ---------- AC1: fictional seed (fresh workspaces only) ---------- */
-
-test('orgSeed returns the fictional Noorderlicht Group in canonical shape', () => {
-  const orgs = orgSeed();
-  assert.equal(orgs.length, 1);
-  const o = orgs[0];
-  assert.equal(o.id, SEED_ORG_ID);
-  assert.equal(o.name, 'Noorderlicht Group');
-  assert.equal(o.domain, 'noorderlicht.example');
-  assert.equal(typeof o.industry, 'string');
-  assert.ok(o.notes.includes('sample'), 'the sample says it is a sample');
-  assert.equal(typeof o.created, 'number');
-  assert.deepEqual(Object.keys(o).sort(), ['created', 'domain', 'id', 'industry', 'name', 'notes']);
-});
-
-test('crmSeedWithOrgs attaches 2 sample clients and moves 1 sample deal under the org', () => {
-  const { clients, deals, orgs } = crmSeedWithOrgs();
-  assert.equal(clients.length, 3, 'the three sample clients are all still there');
-  assert.equal(deals.length, 4);
-  assert.equal(orgs.length, 1);
-  const attached = clients.filter(c => c.org === SEED_ORG_ID);
-  assert.equal(attached.length, 2, 'exactly two sample clients carry the org ref');
-  assert.deepEqual(attached.map(c => c.id).sort(), ['cl1', 'cl3']);
-  const orgDeals = deals.filter(d => d.org === SEED_ORG_ID);
-  assert.equal(orgDeals.length, 1, 'exactly one sample deal moved under the org');
-  assert.equal(orgDeals[0].id, 'd2');
-  const untouched = clients.filter(c => !c.org).map(c => c.id);
-  assert.deepEqual(untouched, ['cl2'], 'the remaining sample client stays unattached');
-});
-
-test('crmSeedWithOrgs builds rows that pass the initializer untouched', () => {
-  const s = crmSeedWithOrgs();
-  const doc = { clients: s.clients, deals: s.deals, orgs: s.orgs };
-  const before = JSON.stringify(doc);
-  ensureOrgsData(doc);
-  assert.equal(JSON.stringify(doc), before, 'seed rows are canonical — the initializer must not rewrite a single byte');
-  assert.equal(doc.orgs[0].domain, 'noorderlicht.example');
 });

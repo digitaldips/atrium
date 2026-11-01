@@ -20,7 +20,7 @@
    deleted by the cascade.
    ===================================================================== */
 
-import { crmSeedClients, crmSeedDeals, dealTotals } from './crm.js';
+import { dealTotals } from './crm.js';
 
 /* ---------- zero-loss doc initializer ---------- */
 /* Same contract as ensureCrmData/ensureDocShape/ensureNotes: the workspace
@@ -229,40 +229,4 @@ export function orgCascadeUnlink(doc, orgId) {
     }
   }
   return counts;
-}
-
-/* ---------- fictional seed sample (fresh workspaces only) ---------- */
-/* Clearly fictional: an invented Dutch/EU holding with an example-style
-   domain, attached to two of the sample clients, with one sample deal
-   moved directly under it — so a fresh workspace demonstrates direct and
-   derived deals on day one. */
-export const SEED_ORG_ID = 'org-noorderlicht';
-const cOff = days => Date.now() - days * 864e5;
-
-export function orgSeed() {
-  return [
-    makeOrg({
-      id: SEED_ORG_ID,
-      name: 'Noorderlicht Group',
-      domain: 'noorderlicht.example',
-      industry: 'Maritime logistics',
-      notes:
-        'Fictional sample organisation — a holding with two contacts and one deal. Attach your own contacts and deals to it, or delete it whenever you like (nothing under it is deleted, it is only unlinked).',
-      created: cOff(45),
-    }),
-  ];
-}
-
-/* The seed clients/deals with the org refs applied. Only ever called from
-   seed() for FRESH workspaces — never a migration of existing rows. */
-export function crmSeedWithOrgs() {
-  const clients = crmSeedClients();
-  const deals = crmSeedDeals();
-  for (const id of ['cl1', 'cl3']) {
-    const c = clients.find(x => x && x.id === id);
-    if (c) c.org = SEED_ORG_ID;
-  }
-  const d2 = deals.find(x => x && x.id === 'd2');
-  if (d2) d2.org = SEED_ORG_ID; /* a direct org deal (client cl2 belongs to no org) */
-  return { clients, deals, orgs: orgSeed() };
 }
