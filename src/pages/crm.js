@@ -84,7 +84,7 @@ export function pageCrm() {
         const ds = dealsOf(c);
         const val = ds.filter(d => d.stage !== 'lost').reduce((s, d) => s + (Number(d.value) || 0), 0);
         const oc = c.org ? org(c.org) : null;
-        const orgLine = [c.company || '', oc ? `${ic('building-2', 10)} ${esc(oc.name)}` : ''].filter(Boolean).join(' · ');
+        const orgLine = [esc(c.company || ''), oc ? `${ic('building-2', 10)} ${esc(oc.name)}` : ''].filter(Boolean).join(' · ');
         return `<tr style="cursor:pointer" data-a="openClient" data-id="${c.id}"><td style="padding-left:14px"><span class="row">${crmAv(c)}<span style="min-width:0"><span style="font-weight:500;display:block">${esc(c.name)}</span><span class="faint" style="font-size:11.5px">${orgLine ? `<span class="trunc" style="display:inline-block;max-width:100%">${orgLine}</span>` : ''}</span></span></span></td><td style="text-align:left">${cStatusPill(c.status)}</td><td style="text-align:left"><span style="display:block;font-size:12.5px">${esc(c.email || '—')}</span><span class="faint" style="font-size:11.5px">${esc(c.phone || '')}</span></td><td style="text-align:left;max-width:260px"><span class="trunc faint" style="font-size:12px;display:inline-block;max-width:250px">${esc(c.notes || '')}</span></td><td class="num">${ds.length}</td><td style="text-align:left" class="num muted">${eur(val)}</td><td style="text-align:left" class="num muted">${fmtDate(new Date(c.created || Date.now()))}</td><td><button class="ibtn ibtn-sm" data-a="editClient" data-id="${c.id}" aria-label="Edit client">${ic('ellipsis', 14)}</button></td></tr>`;
       })
       .join('')}

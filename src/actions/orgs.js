@@ -99,7 +99,7 @@ A.removeOrg = el => {
   ].filter(Boolean);
   const tail = parts.length ? parts.join(', ').replace(/, ([^,]*)$/, ' and $1') : '';
   confirmDlg({
-    title: `Remove ${o.name}?`,
+    title: `Remove ${esc(o.name)}?`,
     body: `The organisation is removed. <b>Nothing else is deleted</b>${tail ? ` — its ${tail} stay` : ''} in Atrium and simply lose the organisation reference. You can undo right after.`,
     ok: 'Remove organisation',
     danger: true,
@@ -113,6 +113,7 @@ A.removeOrg = el => {
         })
       ) {
         S.ui.modals = S.ui.modals.filter(m => !(m.type === 'orgForm' || m.type === 'confirm'));
+        if (S.ui.crmOrg === o.id) S.ui.crmOrg = ''; /* dead filter id → back to All organisations */
         if (S.ui.route === 'org' && S.ui.params.id === o.id) go('orgs');
         render();
         toast(`Removed ${o.name} — contacts, deals and notes are kept`, { action: 'Undo', onAction: () => restore(snap) });
