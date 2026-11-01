@@ -3,7 +3,7 @@
    doc-side orgs[] array. Deleting an org only UNLINKS (org=null) — items
    are never deleted. The auto-suggest is SUGGEST + one-click confirm:
    nothing is stored silently (same contract as the mail auto-link). */
-import { $, uid } from '../core/utils.js';
+import { $, uid, esc } from '../core/utils.js';
 import { D, S, client, crmClients, crmDeals, crmOrgs, org } from '../core/store.js';
 import { makeNote } from '../core/notes.js';
 import { makeOrg, normalizeDomain, orgCascadeUnlink, orgSuggestionFor } from '../core/orgs.js';
