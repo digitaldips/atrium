@@ -2,7 +2,7 @@
    SHELL: render loop, router, sidebar, topbar, skeletons, filter engine
    ===================================================================== */
 import { $, $$ } from '../core/utils.js';
-import { D, S, mem, proj, team } from '../core/store.js';
+import { D, S, mem, org, proj, team } from '../core/store.js';
 import { getCurrentUser } from '../core/supabase.js';
 import { resolveAuthRoute } from '../core/workspace-api.js';
 import { applyPrefs } from '../core/theme.js';
@@ -33,6 +33,8 @@ export const ROUTE_NAMES = {
   team: 'Team',
   crm: 'Clients',
   pipeline: 'Pipeline',
+  orgs: 'Organisations',
+  org: 'Organisation',
   activity: 'Activity',
   settings: 'Settings',
   system: 'Design system',
@@ -55,6 +57,7 @@ export const ROUTE_ICONS = {
   members: 'users',
   crm: 'contact',
   pipeline: 'briefcase',
+  orgs: 'building-2',
   activity: 'activity',
   teams: 'users',
   settings: 'settings',
@@ -123,6 +126,7 @@ export function pageTitle() {
   if (u.route === 'project' && proj(u.params.id)) t = `${(PTABS.find(x => x[0] === u.params.tab) || [0, 'Saved view'])[1]} · ${proj(u.params.id).name}`;
   if (u.route === 'member' && mem(u.params.id)) t = mem(u.params.id).name;
   if (u.route === 'team' && team(u.params.id)) t = team(u.params.id).name;
+  if (u.route === 'org' && org(u.params.id)) t = org(u.params.id).name;
   return `${t} · ${D().ws.name}`;
 }
 /* Anything clickable is keyboard-reachable: non-native [data-a] controls get a role and a tab stop. */

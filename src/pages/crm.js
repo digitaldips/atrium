@@ -1,8 +1,9 @@
 /* ---------- CRM · Clients (route: crm) + shared CRM summary ---------- */
 import { esc, fmtDate } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { D, S, client, crmClients, crmDeals, crmLinks } from '../core/store.js';
+import { D, S, client, crmClients, crmDeals, crmLinks, crmOrgs, org } from '../core/store.js';
 import { linksForClient } from '../core/links.js';
+import { orgSuggestionsForClients } from '../core/orgs.js';
 import { CLIENT_STATUSES, CSTATUS, CRM_STAGE, activeClientCount, dealTotals, eur, isKnownStage } from '../core/crm.js';
 import { ST } from '../core/constants.js';
 import { empty, stIcon } from '../ui/helpers.js';
@@ -42,12 +43,33 @@ export function crmSummary() {
   </div>`;
 }
 
+/* ---------- AC4: auto-suggest strip (SUGGEST + one-click confirm) ---------- */
+/* Pure matcher output from core/orgs.js; a confirmed badge is re-derived
+   from live state before it acts (A.orgAttach). Session-dismissed client
+   ids (S.ui.orgSugDismissed) calm the strip without touching data. */
+function orgSuggestStrip() {
+  const sugs = orgSuggestionsForClients(crmClients(), crmOrgs()).filter(s => !(S.ui.orgSugDismissed || {})[s.clientId]);
+  if (!sugs.length) return '';
+  return `<div class="col" style="gap:6px;margin-bottom:12px">${sugs
+    .map(
+      s =>
+        `<div class="alert info" role="status">${ic('building-2', 14)}<span style="min-width:0"><b>${esc(s.client.name)}</b> — email domain <b>${esc(s.matchedDomain)}</b> matches <b>${esc(s.org.name)}</b>. Attach the contact to this organisation?</span><span class="sp"></span><button class="btn btn-sm btn-primary" data-a="orgAttach" data-id="${esc(s.clientId)}">Attach</button><button class="btn btn-sm btn-ghost" data-a="orgAttachDismiss" data-id="${esc(s.clientId)}">Dismiss</button></div>`,
+    )
+    .join('')}</div>`;
+}
+
 /* ---------- clients page (route: crm) ---------- */
 export function pageCrm() {
   const u = S.ui;
   const q = (u.crmQ || '').toLowerCase();
   const st = u.crmStatus || 'all';
-  let cs = crmClients().filter(c => (st === 'all' || c.status === st) && (!q || [c.name, c.company, c.email].some(x => (x || '').toLowerCase().includes(q))));
+  const orgF = u.crmOrg || 'all';
+  let cs = crmClients().filter(
+    c =>
+      (st === 'all' || c.status === st) &&
+      (orgF === 'all' || (orgF === 'none' ? !c.org : c.org === orgF)) &&
+      (!q || [c.name, c.company, c.email].some(x => (x || '').toLowerCase().includes(q))),
+  );
   cs = [...cs].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const dealsOf = c => crmDeals().filter(d => d.client === c.id);
   let body;
@@ -61,18 +83,24 @@ export function pageCrm() {
       .map(c => {
         const ds = dealsOf(c);
         const val = ds.filter(d => d.stage !== 'lost').reduce((s, d) => s + (Number(d.value) || 0), 0);
-        return `<tr style="cursor:pointer" data-a="openClient" data-id="${c.id}"><td style="padding-left:14px"><span class="row">${crmAv(c)}<span style="min-width:0"><span style="font-weight:500;display:block">${esc(c.name)}</span><span class="faint" style="font-size:11.5px">${esc(c.company || '')}</span></span></span></td><td style="text-align:left">${cStatusPill(c.status)}</td><td style="text-align:left"><span style="display:block;font-size:12.5px">${esc(c.email || '—')}</span><span class="faint" style="font-size:11.5px">${esc(c.phone || '')}</span></td><td style="text-align:left;max-width:260px"><span class="trunc faint" style="font-size:12px;display:inline-block;max-width:250px">${esc(c.notes || '')}</span></td><td class="num">${ds.length}</td><td style="text-align:left" class="num muted">${eur(val)}</td><td style="text-align:left" class="num muted">${fmtDate(new Date(c.created || Date.now()))}</td><td><button class="ibtn ibtn-sm" data-a="editClient" data-id="${c.id}" aria-label="Edit client">${ic('ellipsis', 14)}</button></td></tr>`;
+        const oc = c.org ? org(c.org) : null;
+        const orgLine = [c.company || '', oc ? `${ic('building-2', 10)} ${esc(oc.name)}` : ''].filter(Boolean).join(' · ');
+        return `<tr style="cursor:pointer" data-a="openClient" data-id="${c.id}"><td style="padding-left:14px"><span class="row">${crmAv(c)}<span style="min-width:0"><span style="font-weight:500;display:block">${esc(c.name)}</span><span class="faint" style="font-size:11.5px">${orgLine ? `<span class="trunc" style="display:inline-block;max-width:100%">${orgLine}</span>` : ''}</span></span></span></td><td style="text-align:left">${cStatusPill(c.status)}</td><td style="text-align:left"><span style="display:block;font-size:12.5px">${esc(c.email || '—')}</span><span class="faint" style="font-size:11.5px">${esc(c.phone || '')}</span></td><td style="text-align:left;max-width:260px"><span class="trunc faint" style="font-size:12px;display:inline-block;max-width:250px">${esc(c.notes || '')}</span></td><td class="num">${ds.length}</td><td style="text-align:left" class="num muted">${eur(val)}</td><td style="text-align:left" class="num muted">${fmtDate(new Date(c.created || Date.now()))}</td><td><button class="ibtn ibtn-sm" data-a="editClient" data-id="${c.id}" aria-label="Edit client">${ic('ellipsis', 14)}</button></td></tr>`;
       })
       .join('')}
     </tbody></table></div>`;
   return `<div class="page wide">
     <div class="ph"><div><h1>Clients</h1><p>${crmClients().length} client${crmClients().length === 1 ? '' : 's'} · ${activeClientCount(crmClients())} active</p></div><div class="acts"><button class="btn btn-primary" data-a="newClient">${ic('plus', 14)}Add client</button></div></div>
     ${crmSummary()}
+    ${orgSuggestStrip()}
     <div class="row" style="margin-bottom:16px;gap:8px;flex-wrap:wrap">
       <div class="inwrap">${ic('search', 13)}<input class="input search-sm" id="crm-q" data-in="crmQ" placeholder="Search clients" value="${esc(u.crmQ || '')}" aria-label="Search clients"></div>
       <select class="select" style="height:26px;width:auto;font-size:12px" data-in="crmStatus" aria-label="Filter by status"><option value="all">All statuses</option>${CLIENT_STATUSES.map(
         s => `<option value="${s.id}" ${st === s.id ? 'selected' : ''}>${s.name}</option>`,
       ).join('')}</select>
+      <select class="select" style="height:26px;width:auto;font-size:12px" data-in="crmOrg" aria-label="Filter by organisation"><option value="all">All organisations</option><option value="none" ${orgF === 'none' ? 'selected' : ''}>No organisation</option>${crmOrgs()
+        .map(o => `<option value="${esc(o.id)}" ${orgF === o.id ? 'selected' : ''}>${esc(o.name)}</option>`)
+        .join('')}</select>
     </div>
     ${body}
   </div>`;
@@ -149,6 +177,7 @@ export function clientDetailHtml(m, H) {
       ${prop('mail', 'Email', c.email ? `<button class="pillbtn" data-a="copyText" data-text="${esc(c.email)}">${ic('copy', 12)}${esc(c.email)}</button>` : '<span class="faint">—</span>')}
       ${prop('phone', 'Phone', c.phone ? `<button class="pillbtn" data-a="copyText" data-text="${esc(c.phone)}">${ic('copy', 12)}${esc(c.phone)}</button>` : '<span class="faint">—</span>')}
       ${prop('signal-high', 'Status', cStatusPill(c.status))}
+      ${c.org && org(c.org) ? prop('building-2', 'Organisation', `<button class="pillbtn" data-a="openOrg" data-id="${esc(c.org)}">${ic('building-2', 12)}${esc(org(c.org).name)}</button>`) : ''}
       ${prop('calendar', 'Added', fmtDate(new Date(c.created || Date.now())))}
     </dl>
     ${c.notes ? `<div class="field"><span class="label">Notes</span><div class="muted" style="font-size:13px;line-height:1.55;white-space:pre-wrap">${esc(c.notes)}</div></div>` : ''}
@@ -170,6 +199,12 @@ export function clientDetailHtml(m, H) {
   <div class="modal-f"><button class="btn btn-ghost" data-a="openPipeline">${ic('briefcase', 14)}Pipeline</button><span class="sp"></span><button class="btn btn-secondary" data-a="removeClient" data-id="${c.id}">${ic('trash-2', 14)}Remove</button><button class="btn btn-primary" data-a="editClient" data-id="${c.id}">Edit client</button></div>`;
 }
 
+/* ---------- AC5: organisation select options (None + orgs) ---------- */
+const orgOptionsHtml = selected =>
+  `<option value="">None</option>${crmOrgs()
+    .map(o => `<option value="${esc(o.id)}"${selected === o.id ? ' selected' : ''}>${esc(o.name)}</option>`)
+    .join('')}`;
+
 /* ---------- client add/edit modal ---------- */
 export function clientFormHtml(m, H) {
   const f = S.ui.crmForm || {};
@@ -186,6 +221,7 @@ export function clientFormHtml(m, H) {
       <div class="field grow" style="min-width:150px"><label class="label" for="c-status">Status</label><select class="select" id="c-status" data-in="crmForm" data-f="status">${CLIENT_STATUSES.map(
         s => `<option value="${s.id}" ${f.status === s.id ? 'selected' : ''}>${s.name}</option>`,
       ).join('')}</select></div>
+      <div class="field grow" style="min-width:170px"><label class="label" for="c-org">Organisation</label><select class="select" id="c-org" data-in="crmForm" data-f="org">${orgOptionsHtml(f.org || '')}</select></div>
     </div>
     <div class="field"><label class="label" for="c-notes">Notes</label><textarea class="textarea" id="c-notes" data-in="crmForm" data-f="notes" rows="3" placeholder="Context, preferences, next steps…">${esc(f.notes || '')}</textarea></div>
   </form>
@@ -205,6 +241,9 @@ export function dealFormHtml(m, H) {
         .map(c => `<option value="${c.id}" ${f.client === c.id ? 'selected' : ''}>${esc(c.name)}${c.company ? ' — ' + esc(c.company) : ''}</option>`)
         .join('')}${cls.length ? '' : '<option value="" disabled>No clients yet</option>'}</select></div>
       <div class="field" style="width:140px"><label class="label" for="d-value">Value (EUR)</label><input class="input" id="d-value" type="number" min="0" step="1" data-in="crmForm" data-f="value" value="${esc(f.value || '')}" placeholder="0"></div>
+    </div>
+    <div class="row" style="gap:12px;flex-wrap:wrap">
+      <div class="field grow" style="min-width:170px"><label class="label" for="d-org">Organisation</label><select class="select" id="d-org" data-in="crmForm" data-f="org">${orgOptionsHtml(f.org || '')}</select><span class="hint">Optional and independent of the client — an organisation deal may have no contact.</span></div>
     </div>
     <div class="row" style="gap:12px;flex-wrap:wrap">
       <div class="field grow" style="min-width:150px"><label class="label" for="d-stage">Stage</label><select class="select" id="d-stage" data-in="crmForm" data-f="stage">${Object.values(

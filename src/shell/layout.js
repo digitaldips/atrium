@@ -2,7 +2,7 @@
 import { MOD, TODAY, diffD, esc, parse } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
 import { PSTAT } from '../core/constants.js';
-import { D, S, allTasks, mem, pColor, proj, team, teamsList, visibleProjects } from '../core/store.js';
+import { D, S, allTasks, mem, org, pColor, proj, team, teamsList, visibleProjects } from '../core/store.js';
 import { av } from '../ui/helpers.js';
 import { ROUTE_NAMES } from './render.js';
 import { skeleton } from './skeletons.js';
@@ -16,6 +16,7 @@ import { pageFavorites } from '../pages/favorites.js';
 import { pageProjects } from '../pages/projects.js';
 import { pageCrm } from '../pages/crm.js';
 import { pagePipeline } from '../pages/pipeline.js';
+import { pageOrg, pageOrgs } from '../pages/orgs.js';
 import { pageMember, pageMembers, pageTeam, pageTeams } from '../pages/members.js';
 import { pageActivity } from '../pages/activity.js';
 import { pageSearch } from '../pages/search.js';
@@ -60,6 +61,8 @@ export function renderPage() {
       timeline: pageWsTimeline,
       crm: pageCrm,
       pipeline: pagePipeline,
+      orgs: pageOrgs,
+      org: pageOrg,
       members: pageMembers,
       member: pageMember,
       teams: pageTeams,
@@ -122,6 +125,7 @@ export function renderSidebar() {
         <div class="sgroup-h">CRM</div>
         ${sItem('crm', 'Clients', 'contact', { ct: (d.clients || []).length || '' })}
         ${sItem('pipeline', 'Pipeline', 'briefcase', { ct: (d.deals || []).filter(x => x.stage !== 'won' && x.stage !== 'lost').length || '' })}
+        ${sItem('orgs', 'Organisations', 'building-2', { ct: (d.orgs || []).length || '' })}
       </div>
       <div class="sgroup" id="side-projects">
         <div class="sgroup-h"><span>Projects</span><span class="sp"></span><button class="ibtn ibtn-xs" data-a="newProject" data-tip="New project  P" aria-label="New project">${ic('plus', 14)}</button></div>
@@ -191,6 +195,9 @@ export function crumbs() {
   } else if (r === 'member') {
     out.push(c('Members', 'data-a="go" data-r="members"'));
     out.push(c(mem(u.params.id)?.name || 'Member', '', true));
+  } else if (r === 'org') {
+    out.push(c('Organisations', 'data-a="go" data-r="orgs"'));
+    out.push(c(org(u.params.id)?.name || 'Organisation', '', true));
   } else if (r === 'team') {
     out.push(c('Teams', 'data-a="go" data-r="teams"'));
     out.push(c(team(u.params.id)?.name || 'Team', '', true));

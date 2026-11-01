@@ -13,7 +13,7 @@ const crmAct = (verb, extra) => D().activity.unshift({ id: uid('a'), by: D().me,
 
 /* ---------- clients ---------- */
 A.newClient = () => {
-  S.ui.crmForm = { name: '', company: '', email: '', phone: '', status: 'lead', notes: '' };
+  S.ui.crmForm = { name: '', company: '', email: '', phone: '', status: 'lead', notes: '', org: '' };
   S.ui.errors = {};
   S.ui.pop = null;
   openModal({ type: 'clientForm' });
@@ -22,7 +22,15 @@ A.editClient = el => {
   const c = client(el.dataset.id);
   if (!c) return;
   S.ui.pop = null;
-  S.ui.crmForm = { name: c.name, company: c.company || '', email: c.email || '', phone: c.phone || '', status: c.status || 'lead', notes: c.notes || '' };
+  S.ui.crmForm = {
+    name: c.name,
+    company: c.company || '',
+    email: c.email || '',
+    phone: c.phone || '',
+    status: c.status || 'lead',
+    notes: c.notes || '',
+    org: c.org || '',
+  };
   S.ui.errors = {};
   openModal({ type: 'clientForm', edit: c.id });
 };
@@ -42,6 +50,7 @@ A.submitClient = () => {
   f.phone = ($('#c-phone')?.value || '').trim();
   f.status = $('#c-status')?.value || 'lead';
   f.notes = ($('#c-notes')?.value || '').trim();
+  f.org = $('#c-org')?.value || '';
   if (!f.name) {
     S.ui.errors.crmName = 'Give the client a name';
     render();
@@ -53,7 +62,7 @@ A.submitClient = () => {
     if (!c) return;
     if (
       mutate(() => {
-        Object.assign(c, { name: f.name, company: f.company, email: f.email, phone: f.phone, status: f.status, notes: f.notes });
+        Object.assign(c, { name: f.name, company: f.company, email: f.email, phone: f.phone, status: f.status, notes: f.notes, org: f.org || null });
         crmAct('updated client', `“${c.name}”`);
       })
     ) {
@@ -66,7 +75,17 @@ A.submitClient = () => {
   let c;
   if (
     !mutate(() => {
-      c = { id: uid('cl'), name: f.name, company: f.company, email: f.email, phone: f.phone, status: f.status, notes: f.notes, created: Date.now() };
+      c = {
+        id: uid('cl'),
+        name: f.name,
+        company: f.company,
+        email: f.email,
+        phone: f.phone,
+        status: f.status,
+        notes: f.notes,
+        org: f.org || null,
+        created: Date.now(),
+      };
       D().clients.push(c);
       crmAct('added client', `“${c.name}”`);
     })
@@ -110,7 +129,7 @@ A.removeClient = el => {
 /* ---------- deals ---------- */
 A.newDeal = el => {
   const stage = el.dataset.stage;
-  S.ui.crmForm = { title: '', client: el.dataset.client || crmClients()[0]?.id || '', value: '', stage: stage || 'lead', close: '', notes: '' };
+  S.ui.crmForm = { title: '', client: el.dataset.client || crmClients()[0]?.id || '', value: '', stage: stage || 'lead', close: '', notes: '', org: '' };
   S.ui.errors = {};
   S.ui.pop = null;
   openModal({ type: 'dealForm' });
@@ -126,6 +145,7 @@ A.editDeal = el => {
     stage: d.stage || 'lead',
     close: d.close || '',
     notes: d.notes || '',
+    org: d.org || '',
   };
   S.ui.errors = {};
   openModal({ type: 'dealForm', edit: d.id });
@@ -140,6 +160,7 @@ A.submitDeal = () => {
   f.stage = $('#d-stage')?.value || 'lead';
   f.close = $('#d-close')?.value || '';
   f.notes = ($('#d-notes')?.value || '').trim();
+  f.org = $('#d-org')?.value || '';
   if (!f.title) {
     S.ui.errors.dealTitle = 'Give the deal a name';
     render();
@@ -159,7 +180,7 @@ A.submitDeal = () => {
     if (!d) return;
     if (
       mutate(() => {
-        Object.assign(d, { title: f.title, client: f.client, value, stage, close, notes: f.notes });
+        Object.assign(d, { title: f.title, client: f.client, value, stage, close, notes: f.notes, org: f.org || null });
         crmAct('updated deal', `“${d.title}” (${eur(value)})`);
       })
     ) {
@@ -172,7 +193,7 @@ A.submitDeal = () => {
   let d;
   if (
     !mutate(() => {
-      d = { id: uid('d'), title: f.title, client: f.client, value, stage, close, notes: f.notes, created: Date.now() };
+      d = { id: uid('d'), title: f.title, client: f.client, value, stage, close, notes: f.notes, org: f.org || null, created: Date.now() };
       D().deals.push(d);
       crmAct('added deal', `“${d.title}” (${eur(value)})`);
     })
@@ -249,5 +270,6 @@ IN.crmStatus = el => {
 A.clearCrmFilters = () => {
   S.ui.crmQ = '';
   S.ui.crmStatus = 'all';
+  S.ui.crmOrg = 'all';
   render();
 };

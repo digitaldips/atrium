@@ -1,7 +1,7 @@
 /* ---------- CRM · Deals pipeline (route: pipeline) ---------- */
 import { esc, fmtDate } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { client, crmClients, crmDeals } from '../core/store.js';
+import { client, crmClients, crmDeals, org } from '../core/store.js';
 import { CRM_STAGES, eur } from '../core/crm.js';
 import { empty } from '../ui/helpers.js';
 import { fxc } from '../shell/render.js';
@@ -11,11 +11,13 @@ import { crmSummary, STAGE_C } from './crm.js';
    opens the edit modal. Reuses the task-board .kcard machinery/styles. */
 export function dealCard(d) {
   const c = client(d.client);
+  const oc = d.org ? org(d.org) : null;
   return `<div class="kcard${fxc('moved', d.id)}" draggable="true" data-drag-deal="${d.id}" data-a="editDeal" data-id="${d.id}" role="button" tabindex="0" aria-label="${esc(d.title)}, ${eur(d.value)}">
     <div class="top"><div class="title">${esc(d.title)}</div></div>
     ${d.notes ? `<div class="desc faint" style="font-size:12px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(d.notes)}</div>` : ''}
     <div class="meta">
       <span class="m" data-tip="${esc(c?.name || 'No client')}" style="max-width:120px"><span class="trunc" style="font-size:11.5px;color:var(--text-2)">${esc(c?.name || 'No client')}</span></span>
+      ${oc ? `<span class="m" data-tip="Organisation" style="max-width:110px"><span class="trunc" style="font-size:11.5px;color:var(--text-2)">${ic('building-2', 11)} ${esc(oc.name)}</span></span>` : ''}
       ${d.close ? `<span class="m" aria-label="Close date">${ic('calendar', 12)}${fmtDate(d.close)}</span>` : ''}
       <span class="m" style="margin-left:auto;font-weight:600" aria-label="Value">${eur(d.value)}</span>
     </div>

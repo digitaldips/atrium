@@ -1,6 +1,6 @@
 /* ---------- seed data ---------- */
 import { dOff, minsAgo, uid } from '../core/utils.js';
-import { crmSeedClients, crmSeedDeals } from '../core/crm.js';
+import { crmSeedWithOrgs } from '../core/orgs.js';
 import { notesSeed } from '../core/notes.js';
 
 export function seed() {
@@ -499,6 +499,9 @@ export function seed() {
   ];
   const tmp = tk('t3');
   tmp.updated = minsAgo(38);
+  /* Sample CRM + the fictional Noorderlicht Group (fresh workspaces only —
+     never a migration of existing docs). */
+  const crmSeed = crmSeedWithOrgs();
   return {
     ws: { name: 'Atrium', url: 'atrium', c: '#1D1C1A', brand: true },
     workspaces: [
@@ -508,10 +511,11 @@ export function seed() {
     ],
     me: 'm1',
     members,
-    clients: crmSeedClients(),
-    deals: crmSeedDeals(),
+    clients: crmSeed.clients,
+    deals: crmSeed.deals,
     links: [],
     notes: notesSeed(),
+    orgs: crmSeed.orgs,
     projects,
     tasks: T,
     comments,

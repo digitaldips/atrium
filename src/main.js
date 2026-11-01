@@ -53,6 +53,7 @@ import './actions/events.js';
 import './actions/google.js';
 import './actions/linkage.js';
 import './actions/notes.js';
+import './actions/orgs.js';
 import './actions/keyboard.js';
 import './actions/drag-drop.js';
 import './features/teams.js';

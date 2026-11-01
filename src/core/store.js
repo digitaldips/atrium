@@ -5,6 +5,7 @@ import { seed } from '../data/seed.js';
 import { ensureCrmData } from './crm.js';
 import { ensureDocShape } from './links.js';
 import { ensureNotes } from './notes.js';
+import { ensureOrgsData } from './orgs.js';
 import { sb, getCurrentUser, setCurrentUser } from './supabase.js';
 import { ensureGooglePrefs } from '../../supabase/functions/_shared/google-pure.js';
 import {
@@ -154,6 +155,7 @@ export function bindCacheToUser(userId) {
     ensureCrmData(S.data);
     ensureDocShape(S.data); // links[] (CRM linkage) — zero-loss, same contract
     ensureNotes(S.data); // notes[] (Notes module) — zero-loss, same contract
+    ensureOrgsData(S.data); // orgs[] (Organisations) — zero-loss, same contract
     ensureGooglePrefs(S.prefs);
     return true;
   }
@@ -198,6 +200,7 @@ export async function hydrateWorkspace(session) {
       ensureCrmData(S.data);
       ensureDocShape(S.data);
       ensureNotes(S.data);
+      ensureOrgsData(S.data);
       ensureGooglePrefs(S.prefs);
       await upsertWorkspaceDoc(sb, session.user.id, buildDocPayload(S.data, S.prefs, S.views), D().ws?.name);
       save();
@@ -215,6 +218,7 @@ export async function hydrateWorkspace(session) {
     ensureCrmData(S.data);
     ensureDocShape(S.data);
     ensureNotes(S.data);
+    ensureOrgsData(S.data);
     ensureGooglePrefs(S.prefs);
     save();
     return 'loaded';
@@ -268,9 +272,11 @@ export const commentsOf = tid => D().comments.filter(c => c.task === tid);
 export const crmClients = () => D().clients || [];
 export const crmDeals = () => D().deals || [];
 export const crmLinks = () => D().links || [];
+export const crmOrgs = () => D().orgs || [];
 export const noteById = id => (D().notes || []).find(n => n && n.id === id);
 export const client = id => crmClients().find(c => c.id === id);
 export const deal = id => crmDeals().find(d => d.id === id);
+export const org = id => crmOrgs().find(o => o && o.id === id);
 export function progressOf(pid) {
   const ts = tasksOf(pid);
   if (!ts.length) return 0;

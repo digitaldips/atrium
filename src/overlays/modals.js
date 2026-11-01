@@ -7,6 +7,7 @@ import { FT, av, filePrev, lbl, prPill, stPill } from '../ui/helpers.js';
 import { focusKey, render } from '../shell/render.js';
 import { teamModal } from '../features/teams.js';
 import { clientDetailHtml, clientFormHtml, dealFormHtml } from '../pages/crm.js';
+import { orgFormHtml } from '../pages/orgs.js';
 import { resolveEnabledCalendars, busyBarLayout } from '../../supabase/functions/_shared/google-pure.js';
 
 export function openModal(m) {
@@ -57,6 +58,8 @@ export function modalHtml(m) {
       return wrap('', clientFormHtml(m, H));
     case 'dealForm':
       return wrap('', dealFormHtml(m, H));
+    case 'orgForm':
+      return wrap('', orgFormHtml(m, H));
     case 'filePreview':
       return wrap('lg', filePreviewModal(m, H));
     case 'saveView':
