@@ -4,20 +4,30 @@ import { ic } from '../core/icons.js';
 import { D, S, client, crmClients, crmDeals, crmLinks, crmOrgs, org } from '../core/store.js';
 import { linksForClient } from '../core/links.js';
 import { orgSuggestionsForClients } from '../core/orgs.js';
-import { CLIENT_STATUSES, CSTATUS, CRM_STAGE, activeClientCount, clientCompany, dealTotals, eur, isKnownStage } from '../core/crm.js';
+import { CLIENT_STATUSES, CSTATUS, CRM_STAGE, CRM_STAGES, activeClientCount, clientCompany, dealTotals, eur, isKnownStage } from '../core/crm.js';
+import { expectedValue, realisticPipeline, stageKans, weightedValue } from '../core/forecast.js';
 import { ST } from '../core/constants.js';
 import { av, empty, stIcon } from '../ui/helpers.js';
 
 /* ---------- presentation vocabulary ---------- */
 export const CSTATUS_C = { lead: 'var(--blue)', active: 'var(--green)', inactive: 'var(--gray)' };
-export const STAGE_C = { lead: 'var(--gray)', qualified: 'var(--blue)', proposal: 'var(--violet)', won: 'var(--green)', lost: 'var(--red)' };
+/* Methodology stage colors: the 4 categories ramp cold→warm (dream gray →
+   exploring blue → proposal violet → signed teal), then terminal green/red. */
+export const STAGE_C = {
+  longshot: 'var(--gray)',
+  mogelijk: 'var(--blue)',
+  waarschijnlijk: 'var(--violet)',
+  zeker: 'var(--teal)',
+  won: 'var(--green)',
+  lost: 'var(--red)',
+};
 
 export const cStatusPill = s => {
   const k = CSTATUS[s] ? s : 'lead';
   return `<span class="cstat" style="--c:${CSTATUS_C[k]}"><i></i>${CSTATUS[k].name}</span>`;
 };
 export const stagePill = s => {
-  const k = isKnownStage(s) ? s : 'lead';
+  const k = isKnownStage(s) ? s : 'longshot';
   return `<span class="cstat" style="--c:${STAGE_C[k]}"><i></i>${CRM_STAGE[k].name}</span>`;
 };
 export const crmAv = c => {
@@ -32,11 +42,17 @@ export const crmAv = c => {
 };
 
 /* ---------- AC4: summary strip (shared by both CRM routes) ---------- */
+/* Shows BOTH the total expected open pipeline and the WEIGHTED sum
+   ('Realistische pipeline' = Σ expected × kans over open deals — zeker
+   deals count at 100%). */
 export function crmSummary() {
-  const t = dealTotals(crmDeals());
+  const deals = crmDeals();
+  const t = dealTotals(deals);
+  const rp = realisticPipeline(deals);
   const cl = crmClients();
   const n = v => `${v} deal${v === 1 ? '' : 's'}`;
   return `<div class="stats" style="margin-bottom:16px">
+    <div class="stat"><span class="k">Realistische pipeline</span><span class="v">${eur(rp)}</span><span class="d">Σ verwachte waarde × kans</span></div>
     <div class="stat"><span class="k">Open pipeline</span><span class="v">${eur(t.openValue)}</span><span class="d">${n(t.openCount)} open</span></div>
     <div class="stat"><span class="k">Won</span><span class="v">${eur(t.wonValue)}</span><span class="d">${n(t.wonCount)} won</span></div>
     <div class="stat"><span class="k">Active clients</span><span class="v">${activeClientCount(cl)}</span><span class="d">${cl.length} total</span></div>
@@ -236,10 +252,30 @@ export function clientFormHtml(m, H) {
 }
 
 /* ---------- deal add/edit modal ---------- */
+/* The type drives the value fields: project → 'Projectwaarde' (total),
+   retainer → 'Bedrag per maand' + 'Looptijd (mnd)'. The expected value
+   (projectwaarde, or monthly × months) and its WEIGHTED counterpart
+   (× stage kans) are computed live from the form state with the same
+   pure engine the dashboard uses — deal.value stores the expected value. */
 export function dealFormHtml(m, H) {
   const f = S.ui.crmForm || {};
   const err = S.ui.errors.dealTitle;
+  const errValue = S.ui.errors.dealValue;
+  const errMonthly = S.ui.errors.dealMonthly;
+  const errMonths = S.ui.errors.dealMonths;
   const cls = crmClients();
+  const isRet = f.type === 'retainer';
+  const stg = CRM_STAGE[isKnownStage(f.stage) ? f.stage : 'longshot'];
+  const kansPct = Math.round(stageKans(stg.id) * 100);
+  const exp = expectedValue({ type: f.type, value: f.value, monthly: f.monthly, months: f.months, stage: stg.id });
+  const wgt = weightedValue({ type: f.type, value: f.value, monthly: f.monthly, months: f.months, stage: stg.id });
+  const mo = Number(f.monthly);
+  const mn = Math.floor(Number(f.months));
+  const formula = isRet && mo > 0 && mn >= 1 ? ` (${eur(mo)} × ${mn} mnd)` : '';
+  const mathLine =
+    exp > 0
+      ? `Verwachte waarde <b>${eur(exp)}</b>${formula} · gewogen <b>${eur(wgt)}</b> · kans ${kansPct}% (${esc(stg.name)})`
+      : `Kans ${kansPct}% (${esc(stg.name)}) — vul ${isRet ? 'bedrag per maand en looptijd' : 'de projectwaarde'} in voor de verwachte waarde.`;
   return `${H(m.edit ? 'Edit deal' : 'New deal', m.edit ? '' : 'Track an opportunity from first contact to close.')}
   <form class="modal-b" data-submit="submitDeal" style="gap:12px">
     <div class="field"><label class="label" for="d-title">Deal</label><input class="input ${err ? 'is-error' : ''}" id="d-title" data-in="crmForm" data-f="title" value="${esc(f.title || '')}" placeholder="e.g. Webshop relaunch" autofocus aria-invalid="${!!err}">${err ? `<span class="err">${ic('circle-alert', 12)}${err}</span>` : ''}</div>
@@ -250,17 +286,26 @@ export function dealFormHtml(m, H) {
             `<option value="${c.id}" ${f.client === c.id ? 'selected' : ''}>${esc(c.name)}${clientCompany(c, crmOrgs()) ? ' — ' + esc(clientCompany(c, crmOrgs())) : ''}</option>`,
         )
         .join('')}${cls.length ? '' : '<option value="" disabled>No clients yet</option>'}</select></div>
-      <div class="field" style="width:140px"><label class="label" for="d-value">Value (EUR)</label><input class="input" id="d-value" type="number" min="0" step="1" data-in="crmForm" data-f="value" value="${esc(f.value || '')}" placeholder="0"></div>
+      <div class="field grow" style="min-width:170px"><label class="label" for="d-type">Type</label><select class="select" id="d-type" data-in="crmForm" data-f="type"><option value="project" ${!isRet ? 'selected' : ''}>Project — vaste projectwaarde</option><option value="retainer" ${isRet ? 'selected' : ''}>Retainer — bedrag per maand</option></select></div>
     </div>
+    ${
+      isRet
+        ? `<div class="row" style="gap:12px;flex-wrap:wrap">
+      <div class="field grow" style="min-width:150px"><label class="label" for="d-monthly">Bedrag per maand (EUR)</label><input class="input ${errMonthly ? 'is-error' : ''}" id="d-monthly" type="number" min="0" step="1" data-in="crmForm" data-f="monthly" value="${esc(f.monthly || '')}" placeholder="0" aria-invalid="${!!errMonthly}">${errMonthly ? `<span class="err">${ic('circle-alert', 12)}${errMonthly}</span>` : ''}</div>
+      <div class="field" style="width:130px"><label class="label" for="d-months">Looptijd (mnd)</label><input class="input ${errMonths ? 'is-error' : ''}" id="d-months" type="number" min="1" step="1" data-in="crmForm" data-f="months" value="${esc(f.months || '')}" placeholder="1" aria-invalid="${!!errMonths}">${errMonths ? `<span class="err">${ic('circle-alert', 12)}${errMonths}</span>` : ''}</div>
+    </div>`
+        : `<div class="row" style="gap:12px;flex-wrap:wrap">
+      <div class="field grow" style="min-width:150px"><label class="label" for="d-value">Projectwaarde (EUR)</label><input class="input ${errValue ? 'is-error' : ''}" id="d-value" type="number" min="0" step="1" data-in="crmForm" data-f="value" value="${esc(f.value || '')}" placeholder="0" aria-invalid="${!!errValue}">${errValue ? `<span class="err">${ic('circle-alert', 12)}${errValue}</span>` : ''}</div>
+    </div>`
+    }
+    <div class="hint" id="d-math" role="status">${ic('calculator', 13)}<span>${mathLine}</span></div>
     <div class="row" style="gap:12px;flex-wrap:wrap">
       <div class="field grow" style="min-width:170px"><label class="label" for="d-org">Organisation</label><select class="select" id="d-org" data-in="crmForm" data-f="org">${orgOptionsHtml(f.org || '')}</select><span class="hint">Optional and independent of the client — an organisation deal may have no contact.</span></div>
     </div>
     <div class="row" style="gap:12px;flex-wrap:wrap">
-      <div class="field grow" style="min-width:150px"><label class="label" for="d-stage">Stage</label><select class="select" id="d-stage" data-in="crmForm" data-f="stage">${Object.values(
-        CRM_STAGE,
-      )
-        .map(s => `<option value="${s.id}" ${f.stage === s.id ? 'selected' : ''}>${s.name}</option>`)
-        .join('')}</select></div>
+      <div class="field grow" style="min-width:150px"><label class="label" for="d-stage">Stage</label><select class="select" id="d-stage" data-in="crmForm" data-f="stage">${CRM_STAGES.map(
+        s => `<option value="${s.id}" ${f.stage === s.id ? 'selected' : ''}>${s.name}</option>`,
+      ).join('')}</select><span class="hint">${esc(stg.fase)} — ${esc(stg.focus)} (kans ${kansPct}%)</span></div>
       <div class="field grow" style="min-width:150px"><label class="label" for="d-close">Close date</label><input class="input" id="d-close" type="date" data-in="crmForm" data-f="close" value="${esc(f.close || '')}"></div>
       <div class="field grow" style="min-width:140px"><label class="label" for="d-owner">Owner</label><select class="select" id="d-owner" data-in="crmForm" data-f="owner">${ownerOptionsHtml(f.owner || '')}</select></div>
     </div>

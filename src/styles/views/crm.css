@@ -54,3 +54,28 @@
 
 /* Clients table on narrow screens: the table scrolls horizontally
    (overflow-x on the panel wrapper) — same behavior as the projects table. */
+
+/* Dashboard horizontal bars (pure forecast-engine output, zero-dep):
+   width is relative to the row set's max; the 2% floor keeps small but
+   real values visible. */
+.fbar {
+  height: 6px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+  flex: 1;
+  min-width: 40px;
+}
+.fbar i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--c, var(--accent));
+  transition: width var(--dur);
+}
+.frow {
+  margin: 12px 0;
+}
+.frow:first-child {
+  margin-top: 2px;
+}

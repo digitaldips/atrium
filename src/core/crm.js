@@ -6,16 +6,70 @@
    ===================================================================== */
 
 /* ---------- vocabulary ---------- */
-/* Fixed pipeline order: the kanban board renders columns in exactly this
-   sequence, and drag-drop writes one of these ids back onto the deal. */
+/* The sales methodology (Wesley's 4-category kans model) as fixed data.
+   The kanban board renders columns in exactly this sequence, drag-drop
+   writes one of these ids back onto the deal, and every stage carries the
+   kans + the verbatim Dutch betekenis/fase/focus from the methodology
+   table — surfaced as tooltips and hints in the pipeline and forms.
+   'zeker' deals STAY in the open pipeline at 100%: a signed contract or
+   running retainer is real, live money, not history. Dragging a deal to
+   won (Gewonnen) means afgerond/opgeleverd and stamps deal.wonAt. */
 export const CRM_STAGES = [
-  { id: 'lead', name: 'Lead' },
-  { id: 'qualified', name: 'Qualified' },
-  { id: 'proposal', name: 'Proposal' },
-  { id: 'won', name: 'Won' },
-  { id: 'lost', name: 'Lost' },
+  {
+    id: 'longshot',
+    name: 'Long shot',
+    kans: 0.01,
+    betekenis: 'Dreamklant of koude lead: interessant, maar (nog) geen echt contact',
+    fase: 'Geïdentificeerd / eerste contact',
+    focus: 'Ingang zoeken, warm maken via netwerk/content',
+  },
+  {
+    id: 'mogelijk',
+    name: 'Mogelijk',
+    kans: 0.25,
+    betekenis: 'In gesprek, behoefte verkend, maar nog geen voorstel of duidelijk budget',
+    fase: 'Kennismaking / verkenning',
+    focus: 'Behoefte scherp krijgen, voorstel voorbereiden',
+  },
+  {
+    id: 'waarschijnlijk',
+    name: 'Waarschijnlijk',
+    kans: 0.5,
+    betekenis: 'Concrete behoefte, budget en beslisser bekend; voorstel ligt er of is in onderhandeling',
+    fase: 'Offerte/SOW uitgebracht',
+    focus: 'Opvolgen, bezwaren wegnemen, closen',
+  },
+  {
+    id: 'zeker',
+    name: 'Zeker',
+    kans: 1,
+    betekenis: 'Getekend of bestaande klant met lopende opdracht/retainer',
+    fase: 'Opdracht/contract rond',
+    focus: 'Leveren, uitbreiden, referentie vragen',
+  },
+  {
+    id: 'won',
+    name: 'Gewonnen',
+    kans: 1,
+    betekenis: 'Deal afgerond: de opdracht is binnengehaald en opgeleverd',
+    fase: 'Afgerond / opgeleverd',
+    focus: 'Leveren, tevredenheid borgen, referentie vragen',
+  },
+  {
+    id: 'lost',
+    name: 'Verloren',
+    kans: 0,
+    betekenis: 'Geen opdracht gekregen',
+    fase: 'Afgebroken',
+    focus: 'Bewaar de les voor de volgende deal',
+  },
 ];
 export const CRM_STAGE = Object.fromEntries(CRM_STAGES.map(s => [s.id, s]));
+/* New deals start at the bottom of the methodology funnel. */
+export const DEFAULT_STAGE = 'longshot';
+/* Stage ids used by docs created before the methodology shipped. Only
+   these three strings remap — anything else is left untouched. */
+const LEGACY_STAGE = { lead: 'mogelijk', qualified: 'mogelijk', proposal: 'waarschijnlijk' };
 
 export const CLIENT_STATUSES = [
   { id: 'lead', name: 'Lead' },
@@ -38,11 +92,27 @@ export function isValidTransition(from, to) {
 /* The workspace document predating the CRM has no clients/deals. This
    initializer runs on hydrate AND bootstrap and ONLY guarantees the two
    arrays exist: existing arrays are kept by reference, every other key is
-   untouched, corrupt non-array values are reset to empty. Idempotent. */
+   untouched, corrupt non-array values are reset to empty. Idempotent.
+   Deals carrying a pre-methodology stage id (lead/qualified/proposal) are
+   remapped onto the closest methodology category in a NEW deal object
+   that keeps every other field — untouched deals keep their reference and
+   the array stays by reference unless a remap actually happened. */
 export function ensureCrmData(doc) {
   if (!doc || typeof doc !== 'object') return doc;
   if (!Array.isArray(doc.clients)) doc.clients = [];
-  if (!Array.isArray(doc.deals)) doc.deals = [];
+  if (!Array.isArray(doc.deals)) {
+    doc.deals = [];
+    return doc;
+  }
+  let dirty = false;
+  const deals = doc.deals.map(d => {
+    if (!d || typeof d !== 'object') return d;
+    const to = LEGACY_STAGE[d.stage];
+    if (!to) return d;
+    dirty = true;
+    return { ...d, stage: to };
+  });
+  if (dirty) doc.deals = deals;
   return doc;
 }
 

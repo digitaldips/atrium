@@ -79,46 +79,143 @@ test('ensureCrmData is idempotent and null-safe', () => {
   assert.equal(ensureCrmData(undefined), undefined);
 });
 
-/* ---------- AC3/AC6: stage order + transition validity ---------- */
+/* ---------- AC1: legacy stage normalization (zero-loss) ---------- */
 
-test('CRM_STAGES are in the fixed pipeline order lead→qualified→proposal→won→lost', () => {
+test('ensureCrmData normalizes legacy stage ids: lead/qualified→mogelijk, proposal→waarschijnlijk', () => {
+  const doc = {
+    deals: [
+      { id: 'd1', stage: 'lead', value: 100 },
+      { id: 'd2', stage: 'qualified', value: 200 },
+      { id: 'd3', stage: 'proposal', value: 300 },
+      { id: 'd4', stage: 'won', value: 400 },
+      { id: 'd5', stage: 'lost', value: 500 },
+      { id: 'd6', stage: 'zeker', value: 600 },
+      { id: 'd7', stage: 'weird', value: 700 },
+      null,
+    ],
+  };
+  ensureCrmData(doc);
+  assert.deepEqual(
+    doc.deals.map(d => (d ? d.stage : null)),
+    ['mogelijk', 'mogelijk', 'waarschijnlijk', 'won', 'lost', 'zeker', 'weird', null],
+    'only the three legacy ids remap; won/lost/unknown and junk rows are untouched',
+  );
+});
+
+test('ensureCrmData normalization is zero-loss: untouched deals keep their reference, remapped deals keep every other field', () => {
+  const kept = { id: 'd9', stage: 'won', value: 1, notes: 'x' };
+  const legacy = { id: 'd8', stage: 'lead', value: 5, close: '2026-11-01', org: 'o1', owner: 'm1' };
+  const doc = { deals: [kept, legacy] };
+  ensureCrmData(doc);
+  assert.equal(doc.deals[0], kept, 'non-legacy deals stay the same object');
+  const remapped = doc.deals[1];
+  assert.notEqual(remapped, legacy, 'the remapped row is a new object');
+  assert.equal(remapped.stage, 'mogelijk');
+  assert.deepEqual(Object.keys(remapped).sort(), ['close', 'id', 'org', 'owner', 'stage', 'value'], 'no fields added or dropped');
+  assert.equal(remapped.value, 5);
+  assert.equal(remapped.close, '2026-11-01');
+  assert.equal(remapped.org, 'o1');
+  assert.equal(remapped.owner, 'm1');
+});
+
+test('ensureCrmData normalization is idempotent and skips clean docs without touching the array', () => {
+  const deals = [
+    { id: 'd1', stage: 'mogelijk' },
+    { id: 'd2', stage: 'zeker' },
+  ];
+  const doc = { deals };
+  const out = ensureCrmData(doc);
+  assert.equal(out.deals, deals, 'a clean doc keeps the array by reference');
+  const snap = JSON.stringify(doc.deals);
+  ensureCrmData(doc);
+  assert.equal(JSON.stringify(doc.deals), snap);
+});
+
+/* ---------- AC1: the 4-category kans methodology (verbatim from the user's table) ---------- */
+
+test('CRM_STAGES are the methodology stages longshot→mogelijk→waarschijnlijk→zeker→won→lost', () => {
   assert.deepEqual(
     CRM_STAGES.map(s => s.id),
-    ['lead', 'qualified', 'proposal', 'won', 'lost'],
+    ['longshot', 'mogelijk', 'waarschijnlijk', 'zeker', 'won', 'lost'],
   );
   assert.deepEqual(
     CLIENT_STATUSES.map(s => s.id),
     ['lead', 'active', 'inactive'],
+    'client statuses are a separate vocabulary and unchanged',
   );
 });
 
-test('stageIndex resolves positions and rejects unknown stages', () => {
-  assert.equal(stageIndex('lead'), 0);
-  assert.equal(stageIndex('won'), 3);
-  assert.equal(stageIndex('lost'), 4);
+test('every stage carries name + kans + betekenis/fase/focus', () => {
+  const byId = Object.fromEntries(CRM_STAGES.map(s => [s.id, s]));
+  assert.deepEqual(
+    ['longshot', 'mogelijk', 'waarschijnlijk', 'zeker'].map(id => [byId[id].name, byId[id].kans]),
+    [
+      ['Long shot', 0.01],
+      ['Mogelijk', 0.25],
+      ['Waarschijnlijk', 0.5],
+      ['Zeker', 1],
+    ],
+  );
+  assert.equal(byId.won.name, 'Gewonnen');
+  assert.equal(byId.lost.name, 'Verloren');
+  assert.equal(byId.won.kans, 1);
+  assert.equal(byId.lost.kans, 0);
+  for (const s of CRM_STAGES)
+    for (const k of ['betekenis', 'fase', 'focus']) {
+      assert.equal(typeof s[k], 'string', `${s.id}.${k} is a string`);
+      assert.ok(s[k].length > 0, `${s.id}.${k} is not empty`);
+    }
+});
+
+test('the 4 categories carry the exact verbatim methodology strings', () => {
+  const byId = Object.fromEntries(CRM_STAGES.map(s => [s.id, s]));
+  assert.equal(byId.longshot.betekenis, 'Dreamklant of koude lead: interessant, maar (nog) geen echt contact');
+  assert.equal(byId.longshot.fase, 'Geïdentificeerd / eerste contact');
+  assert.equal(byId.longshot.focus, 'Ingang zoeken, warm maken via netwerk/content');
+  assert.equal(byId.mogelijk.betekenis, 'In gesprek, behoefte verkend, maar nog geen voorstel of duidelijk budget');
+  assert.equal(byId.mogelijk.fase, 'Kennismaking / verkenning');
+  assert.equal(byId.mogelijk.focus, 'Behoefte scherp krijgen, voorstel voorbereiden');
+  assert.equal(byId.waarschijnlijk.betekenis, 'Concrete behoefte, budget en beslisser bekend; voorstel ligt er of is in onderhandeling');
+  assert.equal(byId.waarschijnlijk.fase, 'Offerte/SOW uitgebracht');
+  assert.equal(byId.waarschijnlijk.focus, 'Opvolgen, bezwaren wegnemen, closen');
+  assert.equal(byId.zeker.betekenis, 'Getekend of bestaande klant met lopende opdracht/retainer');
+  assert.equal(byId.zeker.fase, 'Opdracht/contract rond');
+  assert.equal(byId.zeker.focus, 'Leveren, uitbreiden, referentie vragen');
+});
+
+test('stageIndex resolves methodology positions and rejects unknown stages', () => {
+  assert.equal(stageIndex('longshot'), 0);
+  assert.equal(stageIndex('mogelijk'), 1);
+  assert.equal(stageIndex('waarschijnlijk'), 2);
+  assert.equal(stageIndex('zeker'), 3);
+  assert.equal(stageIndex('won'), 4);
+  assert.equal(stageIndex('lost'), 5);
   assert.equal(stageIndex('nope'), -1);
-  assert.equal(isKnownStage('proposal'), true);
+  assert.equal(isKnownStage('waarschijnlijk'), true);
+  assert.equal(isKnownStage('lead'), false, 'legacy ids are no longer pipeline stages');
   assert.equal(isKnownStage('done'), false);
 });
 
 test('isValidTransition accepts any move between known stages, rejects unknown/same', () => {
-  assert.equal(isValidTransition('lead', 'qualified'), true);
-  assert.equal(isValidTransition('proposal', 'lead'), true, 'dragging backwards is allowed');
+  assert.equal(isValidTransition('longshot', 'mogelijk'), true);
+  assert.equal(isValidTransition('waarschijnlijk', 'longshot'), true, 'dragging backwards is allowed');
+  assert.equal(isValidTransition('zeker', 'won'), true, 'zeker → Gewonnen is the afgerond move');
   assert.equal(isValidTransition('won', 'lost'), true);
-  assert.equal(isValidTransition('lead', 'won'), true);
-  assert.equal(isValidTransition('lead', 'nope'), false);
-  assert.equal(isValidTransition('nope', 'lead'), false);
-  assert.equal(isValidTransition(undefined, 'lead'), false);
-  assert.equal(isValidTransition('lead', 'lead'), false, 'same stage is not a move');
+  assert.equal(isValidTransition('zeker', 'mogelijk'), true, 'a signed contract can reopen');
+  assert.equal(isValidTransition('longshot', 'won'), true);
+  assert.equal(isValidTransition('longshot', 'nope'), false);
+  assert.equal(isValidTransition('nope', 'longshot'), false);
+  assert.equal(isValidTransition(undefined, 'longshot'), false);
+  assert.equal(isValidTransition('longshot', 'longshot'), false, 'same stage is not a move');
 });
 
 /* ---------- AC4/AC6: deal totals math ---------- */
 
 test('dealTotals sums open pipeline separately from won and lost', () => {
   const deals = [
-    { value: 48000, stage: 'proposal' },
-    { value: 32000, stage: 'lead' },
-    { value: 12500, stage: 'qualified' },
+    { value: 48000, stage: 'waarschijnlijk' },
+    { value: 32000, stage: 'mogelijk' },
+    { value: 12500, stage: 'zeker' },
     { value: 8500, stage: 'won' },
     { value: 4000, stage: 'lost' },
   ];
@@ -134,7 +231,7 @@ test('dealTotals sums open pipeline separately from won and lost', () => {
 });
 
 test('dealTotals treats unknown stages as open and tolerates bad values', () => {
-  const t = dealTotals([{ value: 100, stage: 'nope' }, { value: '250', stage: 'lead' }, { value: null, stage: 'lead' }, {}]);
+  const t = dealTotals([{ value: 100, stage: 'nope' }, { value: '250', stage: 'longshot' }, { value: null, stage: 'mogelijk' }, {}]);
   assert.equal(t.openValue, 350);
   assert.equal(t.openCount, 4);
   assert.equal(t.wonValue, 0);

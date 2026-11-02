@@ -16,6 +16,7 @@ import { pageFavorites } from '../pages/favorites.js';
 import { pageProjects } from '../pages/projects.js';
 import { pageCrm } from '../pages/crm.js';
 import { pagePipeline } from '../pages/pipeline.js';
+import { pageDashboard } from '../pages/dashboard.js';
 import { pageOrg, pageOrgs } from '../pages/orgs.js';
 import { pageMember, pageMembers, pageTeam, pageTeams } from '../pages/members.js';
 import { pageActivity } from '../pages/activity.js';
@@ -61,6 +62,7 @@ export function renderPage() {
       timeline: pageWsTimeline,
       crm: pageCrm,
       pipeline: pagePipeline,
+      dashboard: pageDashboard,
       orgs: pageOrgs,
       org: pageOrg,
       members: pageMembers,
@@ -123,9 +125,10 @@ export function renderSidebar() {
       </div>
       <div class="sgroup">
         <div class="sgroup-h">CRM</div>
+        ${sItem('dashboard', 'Dashboard', 'gauge')}
+        ${sItem('orgs', 'Organisations', 'building-2', { ct: (d.orgs || []).length || '' })}
         ${sItem('crm', 'Clients', 'contact', { ct: (d.clients || []).length || '' })}
         ${sItem('pipeline', 'Pipeline', 'briefcase', { ct: (d.deals || []).filter(x => x.stage !== 'won' && x.stage !== 'lost').length || '' })}
-        ${sItem('orgs', 'Organisations', 'building-2', { ct: (d.orgs || []).length || '' })}
       </div>
       <div class="sgroup" id="side-projects">
         <div class="sgroup-h"><span>Projects</span><span class="sp"></span><button class="ibtn ibtn-xs" data-a="newProject" data-tip="New project  P" aria-label="New project">${ic('plus', 14)}</button></div>
