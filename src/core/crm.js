@@ -86,3 +86,12 @@ export function eur(v) {
   const n = Number(v);
   return EUR_FMT.format(Number.isFinite(n) ? Math.round(n) : 0);
 }
+
+/* The org is the single company affiliation on a client. Legacy pre-org
+   clients carry a free-text `company` string — it renders only as a
+   read-only fallback and is never written anymore (preserve-on-edit). */
+export function clientCompany(c, orgs) {
+  if (!c) return '';
+  const o = c.org ? (orgs || []).find(x => x && x.id === c.org) : null;
+  return (o && o.name) || c.company || '';
+}

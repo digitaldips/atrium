@@ -4,7 +4,7 @@ import { ic } from '../core/icons.js';
 import { D, S, client, crmClients, crmDeals, crmLinks, crmOrgs, org } from '../core/store.js';
 import { linksForClient } from '../core/links.js';
 import { orgSuggestionsForClients } from '../core/orgs.js';
-import { CLIENT_STATUSES, CSTATUS, CRM_STAGE, activeClientCount, dealTotals, eur, isKnownStage } from '../core/crm.js';
+import { CLIENT_STATUSES, CSTATUS, CRM_STAGE, activeClientCount, clientCompany, dealTotals, eur, isKnownStage } from '../core/crm.js';
 import { ST } from '../core/constants.js';
 import { empty, stIcon } from '../ui/helpers.js';
 
@@ -84,7 +84,7 @@ export function pageCrm() {
         const ds = dealsOf(c);
         const val = ds.filter(d => d.stage !== 'lost').reduce((s, d) => s + (Number(d.value) || 0), 0);
         const oc = c.org ? org(c.org) : null;
-        const orgLine = [esc(c.company || ''), oc ? `${ic('building-2', 10)} ${esc(oc.name)}` : ''].filter(Boolean).join(' · ');
+        const orgLine = oc ? `${ic('building-2', 10)} ${esc(oc.name)}` : esc(clientCompany(c, crmOrgs()));
         return `<tr style="cursor:pointer" data-a="openClient" data-id="${c.id}"><td style="padding-left:14px"><span class="row">${crmAv(c)}<span style="min-width:0"><span style="font-weight:500;display:block">${esc(c.name)}</span><span class="faint" style="font-size:11.5px">${orgLine ? `<span class="trunc" style="display:inline-block;max-width:100%">${orgLine}</span>` : ''}</span></span></span></td><td style="text-align:left">${cStatusPill(c.status)}</td><td style="text-align:left"><span style="display:block;font-size:12.5px">${esc(c.email || '—')}</span><span class="faint" style="font-size:11.5px">${esc(c.phone || '')}</span></td><td style="text-align:left;max-width:260px"><span class="trunc faint" style="font-size:12px;display:inline-block;max-width:250px">${esc(c.notes || '')}</span></td><td class="num">${ds.length}</td><td style="text-align:left" class="num muted">${eur(val)}</td><td style="text-align:left" class="num muted">${fmtDate(new Date(c.created || Date.now()))}</td><td><button class="ibtn ibtn-sm" data-a="editClient" data-id="${c.id}" aria-label="Edit client">${ic('ellipsis', 14)}</button></td></tr>`;
       })
       .join('')}
@@ -171,7 +171,7 @@ export function clientDetailHtml(m, H) {
     .sort((a, b) => b.created - a.created);
   const t = dealTotals(ds);
   const prop = (icon, label, val) => `<dt>${ic(icon, 14)}${label}</dt><dd>${val}</dd>`;
-  return `${H(esc(c.name), esc(c.company || 'Client'))}
+  return `${H(esc(c.name), esc(clientCompany(c, crmOrgs()) || 'Client'))}
   <div class="modal-b" style="gap:14px">
     <dl class="kv">
       ${prop('mail', 'Email', c.email ? `<button class="pillbtn" data-a="copyText" data-text="${esc(c.email)}">${ic('copy', 12)}${esc(c.email)}</button>` : '<span class="faint">—</span>')}
@@ -209,10 +209,9 @@ const orgOptionsHtml = selected =>
 export function clientFormHtml(m, H) {
   const f = S.ui.crmForm || {};
   const err = S.ui.errors.crmName;
-  return `${H(m.edit ? 'Edit client' : 'New client', m.edit ? '' : 'A contact or company you do business with.')}
+  return `${H(m.edit ? 'Edit client' : 'New client', m.edit ? '' : 'A contact you do business with.')}
   <form class="modal-b" data-submit="submitClient" style="gap:12px">
     <div class="field"><label class="label" for="c-name">Name</label><input class="input ${err ? 'is-error' : ''}" id="c-name" data-in="crmForm" data-f="name" value="${esc(f.name || '')}" placeholder="e.g. Sanne van der Berg" autofocus aria-invalid="${!!err}">${err ? `<span class="err">${ic('circle-alert', 12)}${err}</span>` : ''}</div>
-    <div class="field"><label class="label" for="c-company">Company</label><input class="input" id="c-company" data-in="crmForm" data-f="company" value="${esc(f.company || '')}" placeholder="Optional — company or organisation"></div>
     <div class="row" style="gap:12px;flex-wrap:wrap">
       <div class="field grow" style="min-width:180px"><label class="label" for="c-email">Email</label><input class="input" id="c-email" type="email" data-in="crmForm" data-f="email" value="${esc(f.email || '')}" placeholder="name@company.com"></div>
       <div class="field grow" style="min-width:150px"><label class="label" for="c-phone">Phone</label><input class="input" id="c-phone" data-in="crmForm" data-f="phone" value="${esc(f.phone || '')}" placeholder="+31 20 555 0134"></div>
@@ -238,7 +237,10 @@ export function dealFormHtml(m, H) {
     <div class="field"><label class="label" for="d-title">Deal</label><input class="input ${err ? 'is-error' : ''}" id="d-title" data-in="crmForm" data-f="title" value="${esc(f.title || '')}" placeholder="e.g. Webshop relaunch" autofocus aria-invalid="${!!err}">${err ? `<span class="err">${ic('circle-alert', 12)}${err}</span>` : ''}</div>
     <div class="row" style="gap:12px;flex-wrap:wrap">
       <div class="field grow" style="min-width:170px"><label class="label" for="d-client">Client</label><select class="select" id="d-client" data-in="crmForm" data-f="client">${cls
-        .map(c => `<option value="${c.id}" ${f.client === c.id ? 'selected' : ''}>${esc(c.name)}${c.company ? ' — ' + esc(c.company) : ''}</option>`)
+        .map(
+          c =>
+            `<option value="${c.id}" ${f.client === c.id ? 'selected' : ''}>${esc(c.name)}${clientCompany(c, crmOrgs()) ? ' — ' + esc(clientCompany(c, crmOrgs())) : ''}</option>`,
+        )
         .join('')}${cls.length ? '' : '<option value="" disabled>No clients yet</option>'}</select></div>
       <div class="field" style="width:140px"><label class="label" for="d-value">Value (EUR)</label><input class="input" id="d-value" type="number" min="0" step="1" data-in="crmForm" data-f="value" value="${esc(f.value || '')}" placeholder="0"></div>
     </div>

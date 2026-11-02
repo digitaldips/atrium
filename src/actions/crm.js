@@ -13,7 +13,7 @@ const crmAct = (verb, extra) => D().activity.unshift({ id: uid('a'), by: D().me,
 
 /* ---------- clients ---------- */
 A.newClient = () => {
-  S.ui.crmForm = { name: '', company: '', email: '', phone: '', status: 'lead', notes: '', org: '' };
+  S.ui.crmForm = { name: '', email: '', phone: '', status: 'lead', notes: '', org: '' };
   S.ui.errors = {};
   S.ui.pop = null;
   openModal({ type: 'clientForm' });
@@ -24,12 +24,11 @@ A.editClient = el => {
   S.ui.pop = null;
   S.ui.crmForm = {
     name: c.name,
-    company: c.company || '',
+    org: c.org || '',
     email: c.email || '',
     phone: c.phone || '',
     status: c.status || 'lead',
     notes: c.notes || '',
-    org: c.org || '',
   };
   S.ui.errors = {};
   openModal({ type: 'clientForm', edit: c.id });
@@ -45,7 +44,6 @@ A.submitClient = () => {
   const m = S.ui.modals[S.ui.modals.length - 1];
   const f = S.ui.crmForm;
   f.name = ($('#c-name')?.value || '').trim();
-  f.company = ($('#c-company')?.value || '').trim();
   f.email = ($('#c-email')?.value || '').trim();
   f.phone = ($('#c-phone')?.value || '').trim();
   f.status = $('#c-status')?.value || 'lead';
@@ -62,7 +60,7 @@ A.submitClient = () => {
     if (!c) return;
     if (
       mutate(() => {
-        Object.assign(c, { name: f.name, company: f.company, email: f.email, phone: f.phone, status: f.status, notes: f.notes, org: f.org || null });
+        Object.assign(c, { name: f.name, email: f.email, phone: f.phone, status: f.status, notes: f.notes, org: f.org || null });
         crmAct('updated client', `“${c.name}”`);
       })
     ) {
@@ -78,7 +76,6 @@ A.submitClient = () => {
       c = {
         id: uid('cl'),
         name: f.name,
-        company: f.company,
         email: f.email,
         phone: f.phone,
         status: f.status,

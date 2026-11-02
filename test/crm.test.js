@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   CRM_STAGES,
   CLIENT_STATUSES,
+  clientCompany,
   activeClientCount,
   dealTotals,
   ensureCrmData,
@@ -173,4 +174,22 @@ test('sanitizeDealValue: accepts normal amounts, clamps negatives and junk to 0'
   assert.equal(sanitizeDealValue('abc'), 0);
   assert.equal(sanitizeDealValue(undefined), 0);
   assert.equal(sanitizeDealValue(0), 0);
+});
+
+/* clientCompany: the org is the single affiliation; legacy company strings
+   render only as a read-only fallback (pre-org clients). */
+test('clientCompany — org name wins over legacy company', () => {
+  const orgs = [{ id: 'org1', name: 'Noorderlicht Group' }];
+  const c = { name: 'Sanne', company: 'Old Co', org: 'org1' };
+  assert.equal(clientCompany(c, orgs), 'Noorderlicht Group');
+});
+test('clientCompany — legacy company is the fallback when no org', () => {
+  assert.equal(clientCompany({ name: 'Sanne', company: 'Old Co', org: null }, [{ id: 'org1', name: 'X' }]), 'Old Co');
+  assert.equal(clientCompany({ name: 'Sanne', company: 'Old Co' }, []), 'Old Co');
+});
+test('clientCompany — empty when neither, junk-safe, missing org id', () => {
+  assert.equal(clientCompany({ name: 'Sanne' }, []), '');
+  assert.equal(clientCompany(null, []), '');
+  assert.equal(clientCompany({ company: 'Old', org: 'gone' }, [{ id: 'org1', name: 'X' }]), 'Old');
+  assert.equal(clientCompany({ org: 'gone' }, [null, {}]), '');
 });
