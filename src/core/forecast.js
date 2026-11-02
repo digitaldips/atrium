@@ -39,9 +39,14 @@ export function expectedValue(d) {
   const deal = d && typeof d === 'object' ? d : {};
   if (deal.type === 'retainer') {
     const monthly = Number(deal.monthly);
-    const months = Number(deal.months);
+    const months = Math.floor(Number(deal.months));
     if (!Number.isFinite(monthly) || !Number.isFinite(months)) return 0;
-    return Math.round(monthly * months);
+    /* Floor months EXACTLY like the submit path (form line and stored value
+       must agree), and clamp absurd products to 0 — Infinity would serialize
+       to null in the doc. */
+    if (monthly <= 0 || months < 1) return 0;
+    const raw = monthly * months;
+    return Number.isFinite(raw) ? Math.round(raw) : 0;
   }
   return sanitizeDealValue(deal.value);
 }

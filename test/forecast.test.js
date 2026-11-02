@@ -338,3 +338,16 @@ test('winRate: gewonnen / (gewonnen + verloren), zero-division safe', () => {
   assert.deepEqual(winRate([{ stage: 'mogelijk' }, { stage: 'zeker' }]), { won: 0, lost: 0, rate: 0 }, 'open deals do not count');
   assert.deepEqual(winRate([{ stage: 'lost' }]), { won: 0, lost: 1, rate: 0 });
 });
+
+/* Review findings: months must FLOOR consistently (form line vs submit),
+   and absurd inputs must not overflow to Infinity (serializes to null). */
+test('expectedValue — fractional months floor, matching the submit path (100 × 2.5 mnd = 200, not 250)', () => {
+  assert.equal(expectedValue({ type: 'retainer', monthly: 100, months: 2.5 }), 200);
+  assert.equal(expectedValue({ type: 'retainer', monthly: 100, months: 2.9 }), 200);
+  assert.equal(expectedValue({ type: 'retainer', monthly: 100, months: 0.9 }), 0);
+});
+test('expectedValue — overflow guard: absurd amounts clamp to 0 instead of Infinity', () => {
+  assert.equal(expectedValue({ type: 'retainer', monthly: 1e308, months: 10 }), 0);
+  assert.equal(expectedValue({ type: 'project', value: 1e308 }), 1e308);
+  assert.equal(weightedValue({ type: 'retainer', monthly: 1e308, months: 10, stage: 'zeker' }), 0);
+});
