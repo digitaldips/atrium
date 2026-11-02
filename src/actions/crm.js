@@ -13,7 +13,7 @@ const crmAct = (verb, extra) => D().activity.unshift({ id: uid('a'), by: D().me,
 
 /* ---------- clients ---------- */
 A.newClient = () => {
-  S.ui.crmForm = { name: '', email: '', phone: '', status: 'lead', notes: '', org: '' };
+  S.ui.crmForm = { name: '', email: '', phone: '', status: 'lead', notes: '', org: '', owner: D().me };
   S.ui.errors = {};
   S.ui.pop = null;
   openModal({ type: 'clientForm' });
@@ -25,6 +25,7 @@ A.editClient = el => {
   S.ui.crmForm = {
     name: c.name,
     org: c.org || '',
+    owner: c.owner || '',
     email: c.email || '',
     phone: c.phone || '',
     status: c.status || 'lead',
@@ -49,6 +50,7 @@ A.submitClient = () => {
   f.status = $('#c-status')?.value || 'lead';
   f.notes = ($('#c-notes')?.value || '').trim();
   f.org = $('#c-org')?.value || '';
+  f.owner = $('#c-owner')?.value || '';
   if (!f.name) {
     S.ui.errors.crmName = 'Give the client a name';
     render();
@@ -60,7 +62,7 @@ A.submitClient = () => {
     if (!c) return;
     if (
       mutate(() => {
-        Object.assign(c, { name: f.name, email: f.email, phone: f.phone, status: f.status, notes: f.notes, org: f.org || null });
+        Object.assign(c, { name: f.name, email: f.email, phone: f.phone, status: f.status, notes: f.notes, org: f.org || null, owner: f.owner || null });
         crmAct('updated client', `“${c.name}”`);
       })
     ) {
@@ -81,6 +83,7 @@ A.submitClient = () => {
         status: f.status,
         notes: f.notes,
         org: f.org || null,
+        owner: f.owner || null,
         created: Date.now(),
       };
       D().clients.push(c);
@@ -126,7 +129,16 @@ A.removeClient = el => {
 /* ---------- deals ---------- */
 A.newDeal = el => {
   const stage = el.dataset.stage;
-  S.ui.crmForm = { title: '', client: el.dataset.client || crmClients()[0]?.id || '', value: '', stage: stage || 'lead', close: '', notes: '', org: '' };
+  S.ui.crmForm = {
+    title: '',
+    client: el.dataset.client || crmClients()[0]?.id || '',
+    value: '',
+    stage: stage || 'lead',
+    close: '',
+    notes: '',
+    org: '',
+    owner: D().me,
+  };
   S.ui.errors = {};
   S.ui.pop = null;
   openModal({ type: 'dealForm' });
@@ -143,6 +155,7 @@ A.editDeal = el => {
     close: d.close || '',
     notes: d.notes || '',
     org: d.org || '',
+    owner: d.owner || '',
   };
   S.ui.errors = {};
   openModal({ type: 'dealForm', edit: d.id });
@@ -158,6 +171,7 @@ A.submitDeal = () => {
   f.close = $('#d-close')?.value || '';
   f.notes = ($('#d-notes')?.value || '').trim();
   f.org = $('#d-org')?.value || '';
+  f.owner = $('#d-owner')?.value || '';
   if (!f.title) {
     S.ui.errors.dealTitle = 'Give the deal a name';
     render();
@@ -177,7 +191,7 @@ A.submitDeal = () => {
     if (!d) return;
     if (
       mutate(() => {
-        Object.assign(d, { title: f.title, client: f.client, value, stage, close, notes: f.notes, org: f.org || null });
+        Object.assign(d, { title: f.title, client: f.client, value, stage, close, notes: f.notes, org: f.org || null, owner: f.owner || null });
         crmAct('updated deal', `“${d.title}” (${eur(value)})`);
       })
     ) {
@@ -190,7 +204,18 @@ A.submitDeal = () => {
   let d;
   if (
     !mutate(() => {
-      d = { id: uid('d'), title: f.title, client: f.client, value, stage, close, notes: f.notes, org: f.org || null, created: Date.now() };
+      d = {
+        id: uid('d'),
+        title: f.title,
+        client: f.client,
+        value,
+        stage,
+        close,
+        notes: f.notes,
+        org: f.org || null,
+        owner: f.owner || null,
+        created: Date.now(),
+      };
       D().deals.push(d);
       crmAct('added deal', `“${d.title}” (${eur(value)})`);
     })

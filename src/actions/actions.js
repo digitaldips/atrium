@@ -48,6 +48,7 @@ export function nextKey(p) {
 }
 export function createTask(f) {
   const p = proj(f.project) || visibleProjects().find(canSee);
+  if (!p) return null;
   const maxO = Math.max(0, ...D().tasks.map(t => t.order));
   const t = Object.assign(
     {
@@ -577,10 +578,11 @@ A.newTask = el => {
     projectFromKey(S.ui.composer?.ctx) ||
     (S.ui.drawer && task(S.ui.drawer)?.project) ||
     visibleProjects().find(p => canSee(p) && p.status !== 'complete')?.id;
+  const p = proj(pid);
   S.ui.form = {
     title: '',
     desc: '',
-    project: canSee(proj(pid)) ? pid : 'p1',
+    project: p && canSee(p) ? pid : '',
     status: 'todo',
     assignee: d.assignee || D().me,
     priority: 'medium',
@@ -634,6 +636,11 @@ A.submitTask = () => {
     S.ui.errors.title = 'Give the task a name';
     render();
     $('#f-title')?.focus();
+    return;
+  }
+  if (!proj(f.project)) {
+    S.ui.errors.project = 'Create a project first — tasks live in projects';
+    render();
     return;
   }
   S.ui.errors = {};

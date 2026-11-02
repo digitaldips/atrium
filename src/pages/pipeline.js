@@ -3,7 +3,7 @@ import { esc, fmtDate } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { client, crmClients, crmDeals, org } from '../core/store.js';
 import { CRM_STAGES, eur } from '../core/crm.js';
-import { empty } from '../ui/helpers.js';
+import { empty, av } from '../ui/helpers.js';
 import { fxc } from '../shell/render.js';
 import { crmSummary, STAGE_C } from './crm.js';
 
@@ -19,6 +19,7 @@ export function dealCard(d) {
       <span class="m" data-tip="${esc(c?.name || 'No client')}" style="max-width:120px"><span class="trunc" style="font-size:11.5px;color:var(--text-2)">${esc(c?.name || 'No client')}</span></span>
       ${oc ? `<span class="m" data-tip="Organisation" style="max-width:110px"><span class="trunc" style="font-size:11.5px;color:var(--text-2)">${ic('building-2', 11)} ${esc(oc.name)}</span></span>` : ''}
       ${d.close ? `<span class="m" aria-label="Close date">${ic('calendar', 12)}${fmtDate(d.close)}</span>` : ''}
+      ${d.owner ? `<span class="m" data-tip="Owner">${av(d.owner, 'sm')}</span>` : ''}
       <span class="m" style="margin-left:auto;font-weight:600" aria-label="Value">${eur(d.value)}</span>
     </div>
     <div class="hacts"><button class="ibtn ibtn-xs" data-a="editDeal" data-id="${d.id}" data-tip="Edit deal" aria-label="Edit deal">${ic('pencil', 12)}</button><button class="ibtn ibtn-xs" data-a="removeDeal" data-id="${d.id}" data-tip="Remove deal" aria-label="Remove deal">${ic('trash-2', 13)}</button></div>

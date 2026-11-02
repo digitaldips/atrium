@@ -146,7 +146,7 @@ A.orgAttachDismiss = el => {
 A.orgNewClient = el => {
   const o = org(el.dataset.id);
   S.ui.pop = null;
-  S.ui.crmForm = { name: '', email: '', phone: '', status: 'lead', notes: '', org: o?.id || '' };
+  S.ui.crmForm = { name: '', email: '', phone: '', status: 'lead', notes: '', org: o?.id || '', owner: D().me };
   S.ui.errors = {};
   openModal({ type: 'clientForm' });
 };

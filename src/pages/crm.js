@@ -1,12 +1,12 @@
 /* ---------- CRM · Clients (route: crm) + shared CRM summary ---------- */
 import { esc, fmtDate } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { D, S, client, crmClients, crmDeals, crmLinks, crmOrgs, org } from '../core/store.js';
+import { D, S, client, crmClients, crmDeals, crmLinks, crmOrgs, mem, org } from '../core/store.js';
 import { linksForClient } from '../core/links.js';
 import { orgSuggestionsForClients } from '../core/orgs.js';
 import { CLIENT_STATUSES, CSTATUS, CRM_STAGE, activeClientCount, clientCompany, dealTotals, eur, isKnownStage } from '../core/crm.js';
 import { ST } from '../core/constants.js';
-import { empty, stIcon } from '../ui/helpers.js';
+import { av, empty, stIcon } from '../ui/helpers.js';
 
 /* ---------- presentation vocabulary ---------- */
 export const CSTATUS_C = { lead: 'var(--blue)', active: 'var(--green)', inactive: 'var(--gray)' };
@@ -85,7 +85,7 @@ export function pageCrm() {
         const val = ds.filter(d => d.stage !== 'lost').reduce((s, d) => s + (Number(d.value) || 0), 0);
         const oc = c.org ? org(c.org) : null;
         const orgLine = oc ? `${ic('building-2', 10)} ${esc(oc.name)}` : esc(clientCompany(c, crmOrgs()));
-        return `<tr style="cursor:pointer" data-a="openClient" data-id="${c.id}"><td style="padding-left:14px"><span class="row">${crmAv(c)}<span style="min-width:0"><span style="font-weight:500;display:block">${esc(c.name)}</span><span class="faint" style="font-size:11.5px">${orgLine ? `<span class="trunc" style="display:inline-block;max-width:100%">${orgLine}</span>` : ''}</span></span></span></td><td style="text-align:left">${cStatusPill(c.status)}</td><td style="text-align:left"><span style="display:block;font-size:12.5px">${esc(c.email || '—')}</span><span class="faint" style="font-size:11.5px">${esc(c.phone || '')}</span></td><td style="text-align:left;max-width:260px"><span class="trunc faint" style="font-size:12px;display:inline-block;max-width:250px">${esc(c.notes || '')}</span></td><td class="num">${ds.length}</td><td style="text-align:left" class="num muted">${eur(val)}</td><td style="text-align:left" class="num muted">${fmtDate(new Date(c.created || Date.now()))}</td><td><button class="ibtn ibtn-sm" data-a="editClient" data-id="${c.id}" aria-label="Edit client">${ic('ellipsis', 14)}</button></td></tr>`;
+        return `<tr style="cursor:pointer" data-a="openClient" data-id="${c.id}"><td style="padding-left:14px"><span class="row">${crmAv(c)}<span style="min-width:0"><span style="font-weight:500;display:block">${esc(c.name)}</span><span class="faint" style="font-size:11.5px">${orgLine ? `<span class="trunc" style="display:inline-block;max-width:100%">${orgLine}</span>` : ''}</span></span>${c.owner ? `<span style="margin-left:auto;flex:none">${av(c.owner, 'sm')}</span>` : ''}</span></td><td style="text-align:left">${cStatusPill(c.status)}</td><td style="text-align:left"><span style="display:block;font-size:12.5px">${esc(c.email || '—')}</span><span class="faint" style="font-size:11.5px">${esc(c.phone || '')}</span></td><td style="text-align:left;max-width:260px"><span class="trunc faint" style="font-size:12px;display:inline-block;max-width:250px">${esc(c.notes || '')}</span></td><td class="num">${ds.length}</td><td style="text-align:left" class="num muted">${eur(val)}</td><td style="text-align:left" class="num muted">${fmtDate(new Date(c.created || Date.now()))}</td><td><button class="ibtn ibtn-sm" data-a="editClient" data-id="${c.id}" aria-label="Edit client">${ic('ellipsis', 14)}</button></td></tr>`;
       })
       .join('')}
     </tbody></table></div>`;
@@ -177,6 +177,7 @@ export function clientDetailHtml(m, H) {
       ${prop('mail', 'Email', c.email ? `<button class="pillbtn" data-a="copyText" data-text="${esc(c.email)}">${ic('copy', 12)}${esc(c.email)}</button>` : '<span class="faint">—</span>')}
       ${prop('phone', 'Phone', c.phone ? `<button class="pillbtn" data-a="copyText" data-text="${esc(c.phone)}">${ic('copy', 12)}${esc(c.phone)}</button>` : '<span class="faint">—</span>')}
       ${prop('signal-high', 'Status', cStatusPill(c.status))}
+      ${c.owner ? prop('user', 'Owner', av(c.owner, 'sm')) : ''}
       ${c.org && org(c.org) ? prop('building-2', 'Organisation', `<button class="pillbtn" data-a="openOrg" data-id="${esc(c.org)}">${ic('building-2', 12)}${esc(org(c.org).name)}</button>`) : ''}
       ${prop('calendar', 'Added', fmtDate(new Date(c.created || Date.now())))}
     </dl>
@@ -205,6 +206,12 @@ const orgOptionsHtml = selected =>
     .map(o => `<option value="${esc(o.id)}"${selected === o.id ? ' selected' : ''}>${esc(o.name)}</option>`)
     .join('')}`;
 
+/* Workspace members as owner options; empty option = explicitly unowned. */
+const ownerOptionsHtml = selected =>
+  `<option value="">—</option>${(D().members || [])
+    .map(m => `<option value="${esc(m.id)}"${selected === m.id ? ' selected' : ''}>${esc(m.name)}</option>`)
+    .join('')}`;
+
 /* ---------- client add/edit modal ---------- */
 export function clientFormHtml(m, H) {
   const f = S.ui.crmForm || {};
@@ -221,6 +228,7 @@ export function clientFormHtml(m, H) {
         s => `<option value="${s.id}" ${f.status === s.id ? 'selected' : ''}>${s.name}</option>`,
       ).join('')}</select></div>
       <div class="field grow" style="min-width:170px"><label class="label" for="c-org">Organisation</label><select class="select" id="c-org" data-in="crmForm" data-f="org">${orgOptionsHtml(f.org || '')}</select></div>
+      <div class="field grow" style="min-width:140px"><label class="label" for="c-owner">Owner</label><select class="select" id="c-owner" data-in="crmForm" data-f="owner">${ownerOptionsHtml(f.owner || '')}</select></div>
     </div>
     <div class="field"><label class="label" for="c-notes">Notes</label><textarea class="textarea" id="c-notes" data-in="crmForm" data-f="notes" rows="3" placeholder="Context, preferences, next steps…">${esc(f.notes || '')}</textarea></div>
   </form>
@@ -254,6 +262,7 @@ export function dealFormHtml(m, H) {
         .map(s => `<option value="${s.id}" ${f.stage === s.id ? 'selected' : ''}>${s.name}</option>`)
         .join('')}</select></div>
       <div class="field grow" style="min-width:150px"><label class="label" for="d-close">Close date</label><input class="input" id="d-close" type="date" data-in="crmForm" data-f="close" value="${esc(f.close || '')}"></div>
+      <div class="field grow" style="min-width:140px"><label class="label" for="d-owner">Owner</label><select class="select" id="d-owner" data-in="crmForm" data-f="owner">${ownerOptionsHtml(f.owner || '')}</select></div>
     </div>
     <div class="field"><label class="label" for="d-notes">Notes</label><textarea class="textarea" id="d-notes" data-in="crmForm" data-f="notes" rows="3" placeholder="Next step, decision makers, competition…">${esc(f.notes || '')}</textarea></div>
   </form>
