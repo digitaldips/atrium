@@ -73,9 +73,9 @@
   background: var(--c, var(--accent));
   transition: width var(--dur);
 }
-.frow {
+.fbar-row {
   margin: 12px 0;
 }
-.frow:first-child {
+.fbar-row:first-child {
   margin-top: 2px;
 }

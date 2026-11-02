@@ -17,12 +17,13 @@ import { empty } from '../ui/helpers.js';
 const pct = k => `${Math.round((Number(k) || 0) * 100)}%`;
 
 /* Horizontal CSS bar, zero-dependency: width relative to the row set's
-   max, floored at 2% so a small but real value stays visible. */
+   max, floored at 2% so a small but real value stays visible — a ZERO
+   value renders no bar at all. */
 const fbar = (v, max, c) =>
-  `<div class="fbar" role="presentation"><i style="width:${max > 0 ? Math.max(2, Math.round((v / max) * 100)) : 0}%;--c:${c}"></i></div>`;
+  `<div class="fbar" role="presentation"><i style="width:${v > 0 && max > 0 ? Math.max(2, Math.round((v / max) * 100)) : 0}%;--c:${c}"></i></div>`;
 
-const frow = (left, right, v, max, c) =>
-  `<div class="frow"><div class="row" style="gap:8px;justify-content:space-between"><span style="min-width:0"><span class="trunc" style="display:inline-block;max-width:100%;font-weight:500;font-size:13px">${left}</span></span><span class="num" style="flex-shrink:0;font-size:12.5px;font-weight:600">${right}</span></div>${fbar(v, max, c)}</div>`;
+const fbarRow = (left, right, v, max, c) =>
+  `<div class="fbar-row"><div class="row" style="gap:8px;justify-content:space-between"><span style="min-width:0"><span class="trunc" style="display:inline-block;max-width:100%;font-weight:500;font-size:13px">${left}</span></span><span class="num" style="flex-shrink:0;font-size:12.5px;font-weight:600">${right}</span></div>${fbar(v, max, c)}</div>`;
 
 const statsStrip = (rp, t, wr) =>
   `<div class="stats" style="margin-bottom:16px">
@@ -86,7 +87,7 @@ export function pageDashboard() {
   const stageRows = sb
     .map(r => {
       const c = STAGE_C[r.id] || 'var(--gray)';
-      return frow(
+      return fbarRow(
         `${esc(r.name)} <span class="faint" style="font-weight:400">· kans ${pct(r.kans)}</span>`,
         `${eur(r.expected)} <span class="faint" style="font-weight:400">· gewogen ${eur(r.weighted)} · ${r.count}×</span>`,
         r.expected,
@@ -103,7 +104,7 @@ export function pageDashboard() {
   /* --- won history: last 6 + current months by wonAt --- */
   const maxWon = Math.max(...won.map(r => r.value));
   const wonRows = won
-    .map(r => frow(r.label, `${eur(r.value)} <span class="faint" style="font-weight:400">· ${r.count}×</span>`, r.value, maxWon, 'var(--green)'))
+    .map(r => fbarRow(r.label, `${eur(r.value)} <span class="faint" style="font-weight:400">· ${r.count}×</span>`, r.value, maxWon, 'var(--green)'))
     .join('');
   const wonPanel = `<section class="panel">
     <div class="panel-h"><h2>Gewonnen</h2><div class="acts"><span class="faint" style="font-size:11.5px">last 6 months by wonAt</span></div></div>
