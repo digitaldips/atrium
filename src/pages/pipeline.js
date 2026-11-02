@@ -3,7 +3,7 @@ import { esc, fmtDate } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { client, crmClients, crmDeals, org } from '../core/store.js';
 import { CRM_STAGES, eur } from '../core/crm.js';
-import { expectedValue, weightedValue } from '../core/forecast.js';
+import { expectedValue, stageKans, weightedValue } from '../core/forecast.js';
 import { empty, av } from '../ui/helpers.js';
 import { fxc } from '../shell/render.js';
 import { crmSummary, STAGE_C } from './crm.js';
@@ -17,6 +17,9 @@ export function dealCard(d) {
   const oc = d.org ? org(d.org) : null;
   const isRet = d.type === 'retainer';
   const w = weightedValue(d);
+  /* At kans 1.0 (Zeker/Gewonnen) weighted == expected — showing both is the
+     same price twice. The gewogen chip only earns its line below 100%. */
+  const belowCertain = stageKans(d.stage) < 1;
   return `<div class="kcard${fxc('moved', d.id)}" draggable="true" data-drag-deal="${d.id}" data-a="editDeal" data-id="${d.id}" role="button" tabindex="0" aria-label="${esc(d.title)}, ${eur(expectedValue(d))}">
     <div class="top"><div class="title">${esc(d.title)}</div><span class="m faint" data-tip="${isRet ? 'Retainer — bedrag per maand × looptijd' : 'Project — vaste projectwaarde'}">${ic(isRet ? 'repeat' : 'briefcase', 12)}</span></div>
     ${d.notes ? `<div class="desc faint" style="font-size:12px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(d.notes)}</div>` : ''}
@@ -28,7 +31,7 @@ export function dealCard(d) {
       ${oc ? `<span class="m" data-tip="Organisation" style="flex:1;min-width:0"><span class="trunc" style="font-size:11.5px;color:var(--text-2)">${ic('building-2', 11)} ${esc(oc.name)}</span></span>` : ''}
       ${d.close ? `<span class="m" aria-label="Close date" style="white-space:nowrap">${ic('calendar', 12)}${fmtDate(d.close)}</span>` : ''}
       ${d.owner ? `<span class="m" data-tip="Owner">${av(d.owner, 'sm')}</span>` : ''}
-      <span class="m faint" style="margin-left:auto;font-weight:500" aria-label="Weighted value" data-tip="Gewogen = verwachte waarde × kans">${eur(w)} gewogen</span>
+      ${belowCertain ? `<span class="m faint" style="margin-left:auto;font-weight:500" aria-label="Weighted value" data-tip="Gewogen = verwachte waarde × kans">${eur(w)} gewogen</span>` : ''}
     </div>
     <div class="hacts"><button class="ibtn ibtn-xs" data-a="editDeal" data-id="${d.id}" data-tip="Edit deal" aria-label="Edit deal">${ic('pencil', 12)}</button><button class="ibtn ibtn-xs" data-a="removeDeal" data-id="${d.id}" data-tip="Remove deal" aria-label="Remove deal">${ic('trash-2', 13)}</button></div>
   </div>`;
