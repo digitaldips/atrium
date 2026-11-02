@@ -21,11 +21,14 @@ export function dealCard(d) {
     <div class="top"><div class="title">${esc(d.title)}</div><span class="m faint" data-tip="${isRet ? 'Retainer — bedrag per maand × looptijd' : 'Project — vaste projectwaarde'}">${ic(isRet ? 'repeat' : 'briefcase', 12)}</span></div>
     ${d.notes ? `<div class="desc faint" style="font-size:12px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(d.notes)}</div>` : ''}
     <div class="meta">
-      <span class="m" data-tip="${esc(c?.name || 'No client')}" style="max-width:120px"><span class="trunc" style="font-size:11.5px;color:var(--text-2)">${esc(c?.name || 'No client')}</span></span>
-      ${oc ? `<span class="m" data-tip="Organisation" style="max-width:110px"><span class="trunc" style="font-size:11.5px;color:var(--text-2)">${ic('building-2', 11)} ${esc(oc.name)}</span></span>` : ''}
-      ${d.close ? `<span class="m" aria-label="Close date">${ic('calendar', 12)}${fmtDate(d.close)}</span>` : ''}
+      <span class="m" data-tip="${esc(c?.name || 'No client')}" style="flex:1;min-width:0"><span class="trunc" style="font-size:11.5px;color:var(--text-2)">${esc(c?.name || 'No client')}</span></span>
+      <span class="m" style="font-weight:600" aria-label="Expected value, weighted ${eur(w)}">${eur(expectedValue(d))}</span>
+    </div>
+    <div class="meta" style="margin-top:4px">
+      ${oc ? `<span class="m" data-tip="Organisation" style="flex:1;min-width:0"><span class="trunc" style="font-size:11.5px;color:var(--text-2)">${ic('building-2', 11)} ${esc(oc.name)}</span></span>` : ''}
+      ${d.close ? `<span class="m" aria-label="Close date" style="white-space:nowrap">${ic('calendar', 12)}${fmtDate(d.close)}</span>` : ''}
       ${d.owner ? `<span class="m" data-tip="Owner">${av(d.owner, 'sm')}</span>` : ''}
-      <span class="m" style="margin-left:auto;font-weight:600" aria-label="Expected value, weighted ${eur(w)}">${eur(expectedValue(d))}<span class="faint" style="font-weight:500"> · gewogen ${eur(w)}</span></span>
+      <span class="m faint" style="margin-left:auto;font-weight:500" aria-label="Weighted value" data-tip="Gewogen = verwachte waarde × kans">${eur(w)} gewogen</span>
     </div>
     <div class="hacts"><button class="ibtn ibtn-xs" data-a="editDeal" data-id="${d.id}" data-tip="Edit deal" aria-label="Edit deal">${ic('pencil', 12)}</button><button class="ibtn ibtn-xs" data-a="removeDeal" data-id="${d.id}" data-tip="Remove deal" aria-label="Remove deal">${ic('trash-2', 13)}</button></div>
   </div>`;
