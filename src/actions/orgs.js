@@ -127,11 +127,12 @@ A.removeOrg = el => {
    client got an org meanwhile) must never act silently. */
 A.orgAttach = el => {
   const c = client(el.dataset.id);
-  if (!c || c.org) return;
+  if (!c) return;
   const sug = orgSuggestionFor(c, crmOrgs());
   if (!sug) return;
   mutate(() => {
-    c.org = sug.org.id;
+    if (!Array.isArray(c.orgs)) c.orgs = [];
+    if (!c.orgs.includes(sug.org.id)) c.orgs.push(sug.org.id); /* membership add */
   });
   toast(`Attached ${c.name} to ${sug.org.name} — matched ${sug.matchedDomain}`);
 };
@@ -146,7 +147,7 @@ A.orgAttachDismiss = el => {
 A.orgNewClient = el => {
   const o = org(el.dataset.id);
   S.ui.pop = null;
-  S.ui.crmForm = { name: '', email: '', phone: '', status: 'lead', notes: '', org: o?.id || '', owner: D().me };
+  S.ui.crmForm = { name: '', email: '', phone: '', status: 'lead', notes: '', orgs: o?.id ? [o.id] : [], owner: D().me };
   S.ui.errors = {};
   openModal({ type: 'clientForm' });
 };

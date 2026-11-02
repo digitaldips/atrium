@@ -194,7 +194,16 @@ export function clientDetailHtml(m, H) {
       ${prop('phone', 'Phone', c.phone ? `<button class="pillbtn" data-a="copyText" data-text="${esc(c.phone)}">${ic('copy', 12)}${esc(c.phone)}</button>` : '<span class="faint">—</span>')}
       ${prop('signal-high', 'Status', cStatusPill(c.status))}
       ${c.owner ? prop('user', 'Owner', av(c.owner, 'sm')) : ''}
-      ${c.org && org(c.org) ? prop('building-2', 'Organisation', `<button class="pillbtn" data-a="openOrg" data-id="${esc(c.org)}">${ic('building-2', 12)}${esc(org(c.org).name)}</button>`) : ''}
+      ${(() => {
+        const chips = (c.orgs || []).map(id => org(id)).filter(Boolean);
+        return chips.length
+          ? prop(
+              'building-2',
+              'Organisations',
+              chips.map(o => `<button class="pillbtn" data-a="openOrg" data-id="${esc(o.id)}">${ic('building-2', 12)}${esc(o.name)}</button>`).join(' '),
+            )
+          : '';
+      })()}
       ${prop('calendar', 'Added', fmtDate(new Date(c.created || Date.now())))}
     </dl>
     ${c.notes ? `<div class="field"><span class="label">Notes</span><div class="muted" style="font-size:13px;line-height:1.55;white-space:pre-wrap">${esc(c.notes)}</div></div>` : ''}
@@ -217,7 +226,8 @@ export function clientDetailHtml(m, H) {
 }
 
 /* ---------- AC5: organisation select options (None + orgs) ---------- */
-const orgOptionsHtml = selected =>
+/* Deal-form org options: deals keep a SINGLE org (None + orgs). */
+const dealOrgOptionsHtml = selected =>
   `<option value="">None</option>${crmOrgs()
     .map(o => `<option value="${esc(o.id)}"${selected === o.id ? ' selected' : ''}>${esc(o.name)}</option>`)
     .join('')}`;
@@ -243,7 +253,16 @@ export function clientFormHtml(m, H) {
       <div class="field grow" style="min-width:150px"><label class="label" for="c-status">Status</label><select class="select" id="c-status" data-in="crmForm" data-f="status">${CLIENT_STATUSES.map(
         s => `<option value="${s.id}" ${f.status === s.id ? 'selected' : ''}>${s.name}</option>`,
       ).join('')}</select></div>
-      <div class="field grow" style="min-width:170px"><label class="label" for="c-org">Organisation</label><select class="select" id="c-org" data-in="crmForm" data-f="org">${orgOptionsHtml(f.org || '')}</select></div>
+      <div class="field grow" style="min-width:170px"><span class="label">Organisations</span><div class="col" style="gap:4px;padding-top:2px">${
+        crmOrgs().length
+          ? crmOrgs()
+              .map(
+                o =>
+                  `<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer"><input type="checkbox" class="orgcheck" value="${esc(o.id)}"${(f.orgs || []).includes(o.id) ? ' checked' : ''}>${esc(o.name)}</label>`,
+              )
+              .join('')
+          : '<span class="faint" style="font-size:12px">No organisations yet</span>'
+      }</div></div>
       <div class="field grow" style="min-width:140px"><label class="label" for="c-owner">Owner</label><select class="select" id="c-owner" data-in="crmForm" data-f="owner">${ownerOptionsHtml(f.owner || '')}</select></div>
     </div>
     <div class="field"><label class="label" for="c-notes">Notes</label><textarea class="textarea" id="c-notes" data-in="crmForm" data-f="notes" rows="3" placeholder="Context, preferences, next steps…">${esc(f.notes || '')}</textarea></div>
@@ -300,7 +319,7 @@ export function dealFormHtml(m, H) {
     }
     <div class="hint" id="d-math" role="status">${ic('calculator', 13)}<span>${mathLine}</span></div>
     <div class="row" style="gap:12px;flex-wrap:wrap">
-      <div class="field grow" style="min-width:170px"><label class="label" for="d-org">Organisation</label><select class="select" id="d-org" data-in="crmForm" data-f="org">${orgOptionsHtml(f.org || '')}</select><span class="hint">Optional and independent of the client — an organisation deal may have no contact.</span></div>
+      <div class="field grow" style="min-width:170px"><label class="label" for="d-org">Organisation</label><select class="select" id="d-org" data-in="crmForm" data-f="org">${dealOrgOptionsHtml(f.org || '')}</select><span class="hint">Optional and independent of the client — an organisation deal may have no contact.</span></div>
     </div>
     <div class="row" style="gap:12px;flex-wrap:wrap">
       <div class="field grow" style="min-width:150px"><label class="label" for="d-stage">Stage</label><select class="select" id="d-stage" data-in="crmForm" data-f="stage">${CRM_STAGES.map(

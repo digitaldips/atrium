@@ -162,20 +162,21 @@ test('orgSuggestionFor proposes the org with the match basis shown', () => {
   assert.equal(sug.matchedDomain, 'vanderberg.example', 'the UI shows the matched domain as the basis');
 });
 
-test('orgSuggestionFor never suggests for a client that already has an org', () => {
-  const orgs = [makeOrg({ id: 'org1', name: 'A', domain: 'a.example', created: 1 }), makeOrg({ id: 'org2', name: 'B', domain: 'a.example', created: 2 })];
-  const same = { id: 'cl1', name: 'x', email: 'u@a.example', org: 'org1' };
-  assert.equal(orgSuggestionFor(same, orgs), null, 'already attached to the matching org');
-  const other = { id: 'cl2', name: 'y', email: 'u@a.example', org: 'org9' };
-  assert.equal(orgSuggestionFor(other, orgs), null, 'attached elsewhere — the form is the place to change it');
-});
+test('orgSuggestionFor suppressed only for a member org (multi-org semantics)', () => {
+  const orgs = [
+    { id: 'o1', domain: 'alpha.com' },
+    { id: 'o2', domain: 'alpha.com' },
+  ];
+  const c = { id: 'c1', email: 'x@alpha.com', orgs: ['o1'] };
+  assert.equal(orgSuggestionFor(c, orgs), null); /* already member of the matched org */
+}); /* a non-member matching org still suggests — covered in the T11 test above */
 
 test('orgSuggestionsForClients collects suggestions and tolerates junk', () => {
   const orgs = [makeOrg({ id: 'org1', name: 'A', domain: 'a.example', created: 1 })];
   const clients = [
     { id: 'cl1', name: 'x', email: 'u@a.example' },
     { id: 'cl2', name: 'y', email: 'nope' },
-    { id: 'cl3', name: 'z', email: 'u@a.example', org: 'org1' },
+    { id: 'cl3', name: 'z', email: 'u@a.example', orgs: ['org1'] },
     'junk',
     null,
   ];
@@ -190,9 +191,9 @@ test('orgSuggestionsForClients collects suggestions and tolerates junk', () => {
 
 const ORGS = [makeOrg({ id: 'org1', name: 'Noorderlicht Group', domain: 'noorderlicht.example', industry: 'Maritime logistics', created: 1 })];
 const CLIENTS = [
-  { id: 'cl1', name: 'Van der Berg Architects', email: 'sanne@vanderberg.example', org: 'org1' },
+  { id: 'cl1', name: 'Van der Berg Architects', email: 'sanne@vanderberg.example', orgs: ['org1'] },
   { id: 'cl2', name: 'Meridian Fitness', email: 'jonas@meridianfitness.example' },
-  { id: 'cl3', name: 'Koffie & Co', email: 'femke@koffieco.example', org: 'org1' },
+  { id: 'cl3', name: 'Koffie & Co', email: 'femke@koffieco.example', orgs: ['org1'] },
 ];
 
 test('orgClients returns only clients attached to the org', () => {
@@ -282,9 +283,9 @@ test('orgListRow computes contacts count and open-pipeline value per org', () =>
 test('orgCascadeUnlink clears org=null on the org clients/deals/notes and deletes nothing', () => {
   const doc = {
     clients: [
-      { id: 'cl1', name: 'In org', org: 'org1' },
+      { id: 'cl1', name: 'In org', orgs: ['org1'] },
       { id: 'cl2', name: 'No org' },
-      { id: 'cl3', name: 'Other org', org: 'org9' },
+      { id: 'cl3', name: 'Other org', orgs: ['org9'] },
     ],
     deals: [
       { id: 'd1', title: 'Direct', org: 'org1', client: 'cl1' },
@@ -303,8 +304,8 @@ test('orgCascadeUnlink clears org=null on the org clients/deals/notes and delete
   assert.equal(doc.deals.length, 3, 'deals are NEVER deleted');
   assert.equal(doc.notes.length, 2, 'notes are NEVER deleted');
   assert.equal(doc.orgs.length, 1, 'the org row itself is removed by the caller, not here');
-  assert.equal(doc.clients[0].org, null, 'unlinked to null');
-  assert.equal(doc.clients[2].org, 'org9', 'other orgs untouched');
+  assert.deepEqual(doc.clients[0].orgs, [], 'membership removed, client kept');
+  assert.deepEqual(doc.clients[2].orgs, ['org9'], 'other orgs untouched');
   assert.equal(doc.deals[0].org, null);
   assert.equal(doc.deals[1].org, undefined, 'a deal without an org ref is never rewritten by the cascade');
   assert.equal(doc.deals[2].org, 'org9');
@@ -313,10 +314,42 @@ test('orgCascadeUnlink clears org=null on the org clients/deals/notes and delete
 });
 
 test('orgCascadeUnlink is idempotent and junk-safe', () => {
-  const doc = { clients: [{ id: 'cl1', org: 'org1' }], deals: 'oops', notes: null };
+  const doc = { clients: [{ id: 'cl1', orgs: ['org1'] }], deals: 'oops', notes: null };
   assert.deepEqual(orgCascadeUnlink(doc, 'org1'), { clients: 1, deals: 0, notes: 0 });
   assert.deepEqual(orgCascadeUnlink(doc, 'org1'), { clients: 0, deals: 0, notes: 0 }, 'second pass changes nothing');
   assert.deepEqual(orgCascadeUnlink({}, 'org1'), { clients: 0, deals: 0, notes: 0 });
   assert.deepEqual(orgCascadeUnlink(null, 'org1'), { clients: 0, deals: 0, notes: 0 });
   assert.deepEqual(orgCascadeUnlink({ clients: [{}] }, ''), { clients: 0, deals: 0, notes: 0 });
+});
+
+/* T11 multi-org: membership, cascade filter, suggest suppression. */
+test('orgClients — a client in multiple orgs appears in each list', () => {
+  const clients = [
+    { id: 'c1', orgs: ['o1', 'o2'] },
+    { id: 'c2', orgs: ['o1'] },
+  ];
+  assert.deepEqual(
+    orgClients('o1', clients).map(c => c.id),
+    ['c1', 'c2'],
+  );
+  assert.deepEqual(
+    orgClients('o2', clients).map(c => c.id),
+    ['c1'],
+  );
+});
+test('orgCascadeUnlink — removes the org from client.orgs, keeps other memberships and the client', () => {
+  const doc = { clients: [{ id: 'c1', orgs: ['o1', 'o2'] }], deals: [], notes: [] };
+  orgCascadeUnlink(doc, 'o1');
+  assert.deepEqual(doc.clients[0].orgs, ['o2']);
+  assert.equal(doc.clients.length, 1);
+});
+test('orgSuggestionFor — suppressed for a member org, still suggests a NOT-yet-member org', () => {
+  const orgs = [
+    { id: 'o1', domain: 'alpha.com' },
+    { id: 'o2', domain: 'beta.com' },
+  ];
+  const c = { id: 'c1', email: 'x@alpha.com', orgs: ['o1'] };
+  assert.equal(orgSuggestionFor(c, orgs), null); /* already member of o1 */
+  const c2 = { id: 'c2', email: 'y@beta.com', orgs: ['o1'] };
+  assert.equal(orgSuggestionFor(c2, orgs).org.id, 'o2'); /* not yet member of o2 */
 });

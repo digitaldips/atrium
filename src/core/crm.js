@@ -100,6 +100,19 @@ export function isValidTransition(from, to) {
 export function ensureCrmData(doc) {
   if (!doc || typeof doc !== 'object') return doc;
   if (!Array.isArray(doc.clients)) doc.clients = [];
+  /* T11 multi-org: client.orgs (array of org ids) is the source of truth.
+     Legacy single `org` strings MOVE into orgs (key removed, value kept —
+     equivalence: every legacy value ends up in the migrated array). Junk
+     values drop to []. Idempotent; existing orgs arrays pass untouched. */
+  for (const c of doc.clients) {
+    if (!c || typeof c !== 'object') continue;
+    if (typeof c.org === 'string' && c.org) {
+      c.orgs = Array.isArray(c.orgs) ? (c.orgs.includes(c.org) ? c.orgs : [c.org, ...c.orgs]) : [c.org];
+    } else if (!Array.isArray(c.orgs)) {
+      c.orgs = [];
+    }
+    if ('org' in c) delete c.org;
+  }
   if (!Array.isArray(doc.deals)) {
     doc.deals = [];
     return doc;
@@ -162,6 +175,12 @@ export function eur(v) {
    read-only fallback and is never written anymore (preserve-on-edit). */
 export function clientCompany(c, orgs) {
   if (!c) return '';
-  const o = c.org ? (orgs || []).find(x => x && x.id === c.org) : null;
-  return (o && o.name) || c.company || '';
+  /* Membership orgs joined; legacy pre-org company strings render only as a
+     read-only fallback and are never written anymore (preserve-on-edit). */
+  const names = (Array.isArray(c.orgs) ? c.orgs : [])
+    .map(id => (orgs || []).find(x => x && x.id === id))
+    .filter(Boolean)
+    .map(o => o.name);
+  if (names.length) return names.join(' · ');
+  return c.company || '';
 }

@@ -13,7 +13,7 @@ const crmAct = (verb, extra) => D().activity.unshift({ id: uid('a'), by: D().me,
 
 /* ---------- clients ---------- */
 A.newClient = () => {
-  S.ui.crmForm = { name: '', email: '', phone: '', status: 'lead', notes: '', org: '', owner: D().me };
+  S.ui.crmForm = { name: '', email: '', phone: '', status: 'lead', notes: '', orgs: [], owner: D().me };
   S.ui.errors = {};
   S.ui.pop = null;
   openModal({ type: 'clientForm' });
@@ -24,7 +24,7 @@ A.editClient = el => {
   S.ui.pop = null;
   S.ui.crmForm = {
     name: c.name,
-    org: c.org || '',
+    orgs: Array.isArray(c.orgs) ? [...c.orgs] : [],
     owner: c.owner || '',
     email: c.email || '',
     phone: c.phone || '',
@@ -49,7 +49,7 @@ A.submitClient = () => {
   f.phone = ($('#c-phone')?.value || '').trim();
   f.status = $('#c-status')?.value || 'lead';
   f.notes = ($('#c-notes')?.value || '').trim();
-  f.org = $('#c-org')?.value || '';
+  f.orgs = [...new Set([...document.querySelectorAll('.modal .orgcheck:checked')].map(x => x.value))];
   f.owner = $('#c-owner')?.value || '';
   if (!f.name) {
     S.ui.errors.crmName = 'Give the client a name';
@@ -62,7 +62,7 @@ A.submitClient = () => {
     if (!c) return;
     if (
       mutate(() => {
-        Object.assign(c, { name: f.name, email: f.email, phone: f.phone, status: f.status, notes: f.notes, org: f.org || null, owner: f.owner || null });
+        Object.assign(c, { name: f.name, email: f.email, phone: f.phone, status: f.status, notes: f.notes, orgs: f.orgs, owner: f.owner || null });
         crmAct('updated client', `“${c.name}”`);
       })
     ) {
@@ -82,7 +82,7 @@ A.submitClient = () => {
         phone: f.phone,
         status: f.status,
         notes: f.notes,
-        org: f.org || null,
+        orgs: f.orgs,
         owner: f.owner || null,
         created: Date.now(),
       };

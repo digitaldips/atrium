@@ -126,9 +126,10 @@ export function matchOrgByDomain(orgs, email) {
    until the user confirms. */
 export function orgSuggestionFor(clientRow, orgs) {
   if (!clientRow || typeof clientRow !== 'object') return null;
-  if (clientRow.org) return null;
+  if (clientRow.org) return null; /* legacy pre-migration doc */
   const org = matchOrgByDomain(orgs, clientRow.email);
   if (!org) return null;
+  if (Array.isArray(clientRow.orgs) && clientRow.orgs.includes(org.id)) return null; /* already a member */
   return {
     clientId: clientRow.id,
     client: clientRow,
@@ -147,7 +148,7 @@ export function orgSuggestionsForClients(clients, orgs) {
 
 /* Contacts of one org. Pure: filtered copy in input order. */
 export function orgClients(orgId, clients) {
-  return (Array.isArray(clients) ? clients : []).filter(c => c && typeof c === 'object' && c.org === orgId);
+  return (Array.isArray(clients) ? clients : []).filter(c => c && typeof c === 'object' && Array.isArray(c.orgs) && c.orgs.includes(orgId));
 }
 
 /* Deals of one org with the direct-vs-derived distinction:
@@ -211,8 +212,8 @@ export function orgCascadeUnlink(doc, orgId) {
   const counts = { clients: 0, deals: 0, notes: 0 };
   if (!doc || typeof doc !== 'object' || !orgId) return counts;
   for (const c of Array.isArray(doc.clients) ? doc.clients : []) {
-    if (c && typeof c === 'object' && c.org === orgId) {
-      c.org = null;
+    if (c && typeof c === 'object' && Array.isArray(c.orgs) && c.orgs.includes(orgId)) {
+      c.orgs = c.orgs.filter(x => x !== orgId); /* membership removed, client survives */
       counts.clients++;
     }
   }

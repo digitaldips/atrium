@@ -287,7 +287,7 @@ test('stageBreakdown: no unknown row when every stage is known; empty input', ()
 
 test('orgRollup: open weighted per org (direct + derived), sorted descending', () => {
   const orgs = [{ id: 'o1', name: 'A BV' }, { id: 'o2', name: 'B BV' }, null, { name: 'No id' }];
-  const clients = [{ id: 'cl1', org: 'o1' }, { id: 'cl2' }, { id: 'cl3', org: 'o2' }];
+  const clients = [{ id: 'cl1', orgs: ['o1'] }, { id: 'cl2' }, { id: 'cl3', orgs: ['o2'] }];
   const deals = [
     { id: 'd1', org: 'o1', value: 48000, stage: 'waarschijnlijk' },
     { id: 'd2', client: 'cl1', value: 12000, stage: 'zeker' },

@@ -277,7 +277,7 @@ test('sanitizeDealValue: accepts normal amounts, clamps negatives and junk to 0'
    render only as a read-only fallback (pre-org clients). */
 test('clientCompany — org name wins over legacy company', () => {
   const orgs = [{ id: 'org1', name: 'Noorderlicht Group' }];
-  const c = { name: 'Sanne', company: 'Old Co', org: 'org1' };
+  const c = { name: 'Sanne', company: 'Old Co', orgs: ['org1'] };
   assert.equal(clientCompany(c, orgs), 'Noorderlicht Group');
 });
 test('clientCompany — legacy company is the fallback when no org', () => {
@@ -289,4 +289,37 @@ test('clientCompany — empty when neither, junk-safe, missing org id', () => {
   assert.equal(clientCompany(null, []), '');
   assert.equal(clientCompany({ company: 'Old', org: 'gone' }, [{ id: 'org1', name: 'X' }]), 'Old');
   assert.equal(clientCompany({ org: 'gone' }, [null, {}]), '');
+});
+
+/* T11 multi-org: client.orgs is the source of truth; legacy org migrates. */
+test('ensureCrmData — legacy single org migrates to orgs array, org key removed, value moved', () => {
+  const doc = { clients: [{ id: 'c1', name: 'Rick', org: 'org1' }], deals: [] };
+  ensureCrmData(doc);
+  assert.deepEqual(doc.clients[0].orgs, ['org1']);
+  assert.equal('org' in doc.clients[0], false);
+});
+test('ensureCrmData — junk org drops to empty orgs; existing orgs untouched; idempotent', () => {
+  const doc = {
+    clients: [
+      { id: 'c1', org: 42 },
+      { id: 'c2', orgs: ['a', 'b'] },
+    ],
+    deals: [],
+  };
+  ensureCrmData(doc);
+  assert.deepEqual(doc.clients[0].orgs, []);
+  assert.equal('org' in doc.clients[0], false);
+  assert.deepEqual(doc.clients[1].orgs, ['a', 'b']);
+  const before = JSON.stringify(doc);
+  ensureCrmData(doc);
+  assert.equal(JSON.stringify(doc), before);
+});
+test('clientCompany — multiple orgs join with " · "; legacy company only when no orgs', () => {
+  const orgs = [
+    { id: 'o1', name: 'Alpha' },
+    { id: 'o2', name: 'Beta' },
+  ];
+  assert.equal(clientCompany({ orgs: ['o2', 'o1'] }, orgs), 'Beta · Alpha');
+  assert.equal(clientCompany({ orgs: [], company: 'Old Co' }, orgs), 'Old Co');
+  assert.equal(clientCompany({ orgs: ['gone'] }, orgs), '');
 });
