@@ -1,7 +1,7 @@
 /* ---------- CRM · Clients (route: crm) + shared CRM summary ---------- */
 import { esc, fmtDate } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { D, S, client, crmClients, crmDeals, crmLinks, crmOrgs, mem, org } from '../core/store.js';
+import { D, S, client, crmClients, crmDeals, crmLinks, crmOrgs, org } from '../core/store.js';
 import { linksForClient } from '../core/links.js';
 import { orgSuggestionsForClients } from '../core/orgs.js';
 import { CLIENT_STATUSES, CSTATUS, CRM_STAGE, activeClientCount, clientCompany, dealTotals, eur, isKnownStage } from '../core/crm.js';
