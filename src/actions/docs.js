@@ -109,7 +109,7 @@ export async function ensureDocsRows() {
     if (!wsId) throw new Error('No workspace found for this account.');
     const { data, error } = await sb
       .from(DOCS_TABLE)
-      .select('id, parent_id, title, icon, position, source, created_at, updated_at, deleted_at')
+      .select('id, parent_id, title, icon, position, version, source, created_at, updated_at, deleted_at')
       .eq('workspace_id', wsId)
       .is('deleted_at', null)
       .order('position');
