@@ -8,6 +8,7 @@ import { focusKey, render } from '../shell/render.js';
 import { teamModal } from '../features/teams.js';
 import { clientDetailHtml, clientFormHtml, dealFormHtml } from '../pages/crm.js';
 import { orgFormHtml } from '../pages/orgs.js';
+import { docsImportModal, docsMoveModal } from '../pages/docs.js';
 import { resolveEnabledCalendars, busyBarLayout } from '../../supabase/functions/_shared/google-pure.js';
 
 export function openModal(m) {
@@ -71,6 +72,10 @@ export function modalHtml(m) {
       return wrap('', composeModal(m, H));
     case 'geventForm':
       return wrap('', gEventModal(m, H));
+    case 'docsMove':
+      return wrap('sm', docsMoveModal(m, H));
+    case 'docsImport':
+      return wrap('', docsImportModal(m, H));
   }
   return '';
 }

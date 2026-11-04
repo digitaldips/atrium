@@ -204,11 +204,13 @@ export async function hydrateWorkspace(session) {
       ensureNotes(S.data);
       ensureOrgsData(S.data);
       ensureGooglePrefs(S.prefs);
-      await upsertWorkspaceDoc(sb, session.user.id, buildDocPayload(S.data, S.prefs, S.views), D().ws?.name);
+      const up = await upsertWorkspaceDoc(sb, session.user.id, buildDocPayload(S.data, S.prefs, S.views), D().ws?.name);
+      if (up?.id) S.ui.wsId = up.id;
       save();
       return 'bootstrapped';
     }
     const doc = workspaceRowToDoc(row);
+    S.ui.wsId = row.id; /* the docs module targets docs_pages.workspace_id by the workspace row's id */
     S.data = doc.data;
     S.prefs = Object.assign({}, DEFAULT_PREFS, doc.prefs || {});
     S.views = doc.views || {};

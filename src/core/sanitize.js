@@ -86,3 +86,11 @@ export function sanitizeNoteHtml(html) {
   if (typeof html !== 'string' || !html) return '';
   return DOMPurify.sanitize(html, SANITIZE_OPTS);
 }
+
+/* Docs profile — identical posture, own export so the Docs render/save
+   paths read explicitly (docs_pages.content_html is never trusted raw,
+   at save AND at render — same contract as notes). */
+export function docsSanitize(html) {
+  if (typeof html !== 'string' || !html) return '';
+  return DOMPurify.sanitize(html, SANITIZE_OPTS);
+}
