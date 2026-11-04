@@ -8,6 +8,7 @@ import { resolveAuthRoute } from '../core/workspace-api.js';
 import { applyPrefs } from '../core/theme.js';
 import { enhanceSelects, selectMenu } from '../ui/select.js';
 import { renderShell } from './layout.js';
+import { syncDocChannel } from '../actions/docs.js';
 import { PTABS } from '../pages/project.js';
 import { tlAfter } from '../views/timeline.js';
 import { renderLayer } from '../overlays/drawer.js';
@@ -143,6 +144,8 @@ export function makeFocusable() {
 }
 export function render() {
   applyPrefs();
+  /* Leaving Docs closes the open page's live channel (navigation, sign-out). */
+  if (S.ui.route !== 'docs') syncDocChannel('');
   const prevOv = render._ov || {};
   const ov = { pop: !!S.ui.pop, modals: S.ui.modals.length, drawer: S.ui.drawer, pal: !!S.ui.palette, sub: !!S.ui.subOpen };
   // Entrances animate only on the render where the surface first appears.

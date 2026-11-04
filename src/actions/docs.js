@@ -129,6 +129,7 @@ export async function ensureDocSel(id) {
     DC.sel = null;
     DC.selId = '';
     DC.selState = 'idle';
+    syncDocChannel(''); /* leaving the editor closes the page's live channel */
     return;
   }
   if (DC.selId === id && DC.selState !== 'idle') return; /* loading/ok/error are settled for this id */
@@ -140,6 +141,9 @@ export async function ensureDocSel(id) {
   try {
     const { data, error } = await sb.from(DOCS_TABLE).select('*').eq('id', id).maybeSingle();
     if (error) throw error;
+    /* Stale response: a newer selection won the race — this fetch must not
+       mount the wrong page (keystrokes would autosave onto it). */
+    if (DC.selId !== id) return;
     DC.sel = data ? makeDocPage(data) : null;
     DC.selState = 'ok';
     syncDocChannel(id);
@@ -342,6 +346,9 @@ function applyRemoteEdit(pageId, p) {
   const ed = $('#doc-editor');
   if (!ed || ed.dataset.id !== pageId || !DC.sel || DC.sel.id !== pageId) return;
   if (document.activeElement === ed) return;
+  /* A blurred editor can still hold an UNSAVED draft (1s autosave debounce):
+     a broadcast here must not overwrite the keystrokes the timer will save. */
+  if (draft.t) return;
   const clean = docsSanitize(typeof p.html === 'string' ? p.html : '');
   ed.innerHTML = clean;
   DC.sel.content_html = clean;
@@ -691,6 +698,7 @@ A.docsVersionRestore = el => {
       DC.newestSnapshotAt = Date.now();
       DC.preview = '';
       invalidateDocsRows();
+      DC.versionsState = 'idle'; /* re-arm: the restore snapshot must appear in the panel */
       render();
       ensureDocVersions();
       toast('Version restored');
@@ -720,6 +728,8 @@ export async function runDocsSearch() {
   render();
   try {
     const wsId = await ensureWsId();
+    /* Stale response: the user typed a new query while this one was in flight. */
+    if ((S.ui.docs.q || '').trim() !== q) return;
     const { data, error } = await sb
       .from(DOCS_TABLE)
       .select('id, title, content_text, updated_at')
@@ -885,6 +895,12 @@ IN.docsImportFile = async el => {
   }
   closeModal();
   invalidateDocsRows();
+  /* A re-imported page that is OPEN right now must re-fetch on the next
+     render, or its editor autosaves the pre-import content over the import. */
+  if (DC.selId && plan.updates.some(u => u.id === DC.selId)) {
+    DC.selState = 'idle';
+    DC.newestSnapshotAt = null;
+  }
   DC.granola = undefined;
   DC.granolaState = 'idle';
   render();
