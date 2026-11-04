@@ -209,10 +209,14 @@ async function saveDocPage(id) {
         setSavedLabel('Deleted elsewhere');
         return;
       }
+      /* Re-base = the LOCAL edit rides on top of the fresh version: capture
+         the editor's content before adopting the fresh row, or the retry
+         would echo the fresh values back and silently discard the edit. */
+      const local = { title: p.title, content_html: p.content_html, content_text: docTextFromHtml(p.content_html) };
       adopt(fresh.data);
       const retry = await sb
         .from(DOCS_TABLE)
-        .update({ title: p.title, content_html: p.content_html, content_text: docTextFromHtml(p.content_html) })
+        .update(local)
         .eq('id', id)
         .eq('version', Number(p.version) || 0)
         .select();
