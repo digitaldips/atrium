@@ -23,6 +23,7 @@ import { pageActivity } from '../pages/activity.js';
 import { pageSearch } from '../pages/search.js';
 import { pageNotes } from '../pages/notes.js';
 import { pageDocs } from '../pages/docs.js';
+import { pageChat } from '../pages/chat.js';
 import { page404, stateFailed } from '../pages/errors.js';
 import { pageProject } from '../pages/project.js';
 import { pageWsCalendar } from '../views/calendar.js';
@@ -56,6 +57,7 @@ export function renderPage() {
       search: pageSearch,
       notes: pageNotes,
       docs: pageDocs,
+      chat: pageChat,
       overview: pageOverview,
       projects: pageProjects,
       project: pageProject,
@@ -121,6 +123,7 @@ export function renderSidebar() {
         ${sItem('projects', 'Projects', 'folder-kanban')}
         ${sItem('tasks', 'Tasks', 'list-checks')}
         ${sItem('docs', 'Docs', 'file-text')}
+        ${sItem('chat', 'Chat', 'message-square')}
         ${sItem('calendar', 'Calendar', 'calendar')}
         ${sItem('timeline', 'Timeline', 'chart-gantt')}
         ${sItem('members', 'Members', 'users')}

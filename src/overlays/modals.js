@@ -9,6 +9,7 @@ import { teamModal } from '../features/teams.js';
 import { clientDetailHtml, clientFormHtml, dealFormHtml } from '../pages/crm.js';
 import { orgFormHtml } from '../pages/orgs.js';
 import { docsImportModal, docsMoveModal } from '../pages/docs.js';
+import { chatNewChannelModal, chatNewDmModal } from '../pages/chat.js';
 import { resolveEnabledCalendars, busyBarLayout } from '../../supabase/functions/_shared/google-pure.js';
 
 export function openModal(m) {
@@ -76,6 +77,10 @@ export function modalHtml(m) {
       return wrap('sm', docsMoveModal(m, H));
     case 'docsImport':
       return wrap('', docsImportModal(m, H));
+    case 'chatNewChannel':
+      return wrap('sm', chatNewChannelModal(m, H));
+    case 'chatNewDm':
+      return wrap('sm', chatNewDmModal(m, H));
   }
   return '';
 }

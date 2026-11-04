@@ -9,6 +9,7 @@ import { applyPrefs } from '../core/theme.js';
 import { enhanceSelects, selectMenu } from '../ui/select.js';
 import { renderShell } from './layout.js';
 import { syncDocChannel } from '../actions/docs.js';
+import { syncChatChannel } from '../actions/chat.js';
 import { PTABS } from '../pages/project.js';
 import { tlAfter } from '../views/timeline.js';
 import { renderLayer } from '../overlays/drawer.js';
@@ -24,6 +25,7 @@ export const ROUTE_NAMES = {
   search: 'Search',
   notes: 'Notes',
   docs: 'Docs',
+  chat: 'Chat',
   overview: 'Overview',
   projects: 'Projects',
   tasks: 'Tasks',
@@ -53,6 +55,7 @@ export const ROUTE_ICONS = {
   search: 'search',
   notes: 'notebook-pen',
   docs: 'file-text',
+  chat: 'message-square',
   overview: 'layout-dashboard',
   projects: 'folder-kanban',
   tasks: 'list-checks',
@@ -146,6 +149,8 @@ export function render() {
   applyPrefs();
   /* Leaving Docs closes the open page's live channel (navigation, sign-out). */
   if (S.ui.route !== 'docs') syncDocChannel('');
+  /* Leaving Chat closes the workspace chat channel the same way. */
+  if (S.ui.route !== 'chat') syncChatChannel('');
   const prevOv = render._ov || {};
   const ov = { pop: !!S.ui.pop, modals: S.ui.modals.length, drawer: S.ui.drawer, pal: !!S.ui.palette, sub: !!S.ui.subOpen };
   // Entrances animate only on the render where the surface first appears.
