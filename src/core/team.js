@@ -134,7 +134,12 @@ export function pickMemberWorkspace(rows) {
    caller's needsBootstrap — injected so this stays dependency-free. */
 export function pickWorkspaceTarget(memberRow, ownerRow, needsBootstrapFn) {
   const nb = needsBootstrapFn || (() => false);
+  /* MF1 hardening: a NON-EMPTY own workspace always wins. Any workspace
+     owner can plant a membership row for any user (owner_manages_members),
+     so membership-wins only when the viewer's own row is missing or still
+     the empty bootstrap default — a planted row can never hijack a viewer
+     who actively uses their own workspace. */
+  if (ownerRow && !nb(ownerRow)) return { row: ownerRow, mode: 'owner' };
   if (memberRow) return { row: memberRow, mode: 'member' };
-  if (!ownerRow || nb(ownerRow)) return { row: ownerRow, mode: 'bootstrap' };
-  return { row: ownerRow, mode: 'owner' };
+  return { row: ownerRow, mode: 'bootstrap' };
 }

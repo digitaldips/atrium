@@ -225,10 +225,11 @@ export async function hydrateWorkspace(session) {
   if (!sb || !isAuthedSession(session)) return 'local';
   setCurrentUser(session.user.id);
   try {
-    /* (a) membership wins — a member of someone else's workspace never
-       bootstraps against the shared doc. */
+    /* (a) membership wins ONLY when the viewer's own row is missing or
+       empty (MF1 hardening): a planted membership row must never hijack a
+       viewer who actively uses their own workspace. Both rows are fetched. */
     const memberRow = await loadMemberWorkspace(sb, session.user.id);
-    const ownerRow = memberRow ? null : await loadWorkspaceDoc(sb, session.user.id);
+    const ownerRow = await loadWorkspaceDoc(sb, session.user.id);
     const target = pickWorkspaceTarget(memberRow, ownerRow, needsBootstrap);
     if (target.mode === 'member') {
       const row = target.row;
@@ -255,6 +256,10 @@ export async function hydrateWorkspace(session) {
          through the member update-by-id path (memberCtx set first). */
       S.data.me = mine.id;
       S.ui.memberCtx = { wsId: row.id, memberId: mine.id, ownerMe };
+      /* MF2: the sync precondition + the S2 shared-prefs snapshot (member
+         local pref edits stay session-local, never written to the doc). */
+      S.ui.syncedUpdatedAt = row.updated_at;
+      S.ui.sharedPrefsSnapshot = doc.prefs || {};
       save();
       return 'loaded';
     }
@@ -272,6 +277,7 @@ export async function hydrateWorkspace(session) {
       ensureGooglePrefs(S.prefs);
       const up = await upsertWorkspaceDoc(sb, session.user.id, buildDocPayload(S.data, S.prefs, S.views), D().ws?.name);
       if (up?.id) S.ui.wsId = up.id;
+      if (up && up.updated_at) S.ui.syncedUpdatedAt = up.updated_at;
       save();
       return 'bootstrapped';
     }
@@ -279,6 +285,7 @@ export async function hydrateWorkspace(session) {
     const doc = workspaceRowToDoc(row);
     S.ui.memberCtx = null; /* owner path: the doc's me IS the viewer */
     S.ui.wsId = row.id; /* the docs module targets docs_pages.workspace_id by the workspace row's id */
+    S.ui.syncedUpdatedAt = row.updated_at; /* MF2 precondition for the owner update-by-id sync */
     S.data = doc.data;
     S.prefs = Object.assign({}, DEFAULT_PREFS, doc.prefs || {});
     S.views = doc.views || {};

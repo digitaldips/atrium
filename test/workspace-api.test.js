@@ -89,13 +89,14 @@ test('workspaceRowToDoc fills missing doc sections with null and rejects empty r
   assert.deepEqual(partial, { data: { tasks: [] }, prefs: null, views: null });
 });
 
-test('needsBootstrap is true only when there is no usable workspace document', () => {
+test('needsBootstrap is true ONLY for effectively empty rows (S4: never seed over a partial doc)', () => {
   assert.equal(needsBootstrap(null), true);
   assert.equal(needsBootstrap(undefined), true);
   assert.equal(needsBootstrap({}), true);
   assert.equal(needsBootstrap({ data: {} }), true);
   assert.equal(needsBootstrap({ data: { data: null } }), true);
-  assert.equal(needsBootstrap({ data: { data: { prefs: { theme: 'dark' } } } }), true, 'a doc without tasks is not a workspace');
+  assert.equal(needsBootstrap({ data: { data: {} } }), true, 'an empty inner doc is still bootstrapable');
+  assert.equal(needsBootstrap({ data: { data: { prefs: { theme: 'dark' } } } }), false, 'a doc with ANY content must not be annihilated by a seed re-bootstrap');
   assert.equal(needsBootstrap({ data: { data: { tasks: [] } } }), false);
   assert.equal(needsBootstrap({ data: { data: { tasks: [{ id: 't1' }] } } }), false);
 });

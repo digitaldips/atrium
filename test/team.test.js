@@ -19,13 +19,27 @@ const ownerEntry = { id: 'm1', name: 'Wesley', email: 'wesley@operanceai.com', r
 const memberEntry = { id: 'm2', name: 'Jonathan', email: 'jonathan@operanceai.com', role: 'Member', authUserId: 'auth-member' };
 const pendingEntry = { id: 'm3', name: 'Pat', email: 'pat@operanceai.com', role: 'Member', pending: true, status: 'invited' };
 
-/* ---------- resolution order (AC2: member > owner > bootstrap) ---------- */
-test('pickWorkspaceTarget prefers the membership row over the owner row', () => {
-  const memberRow = { id: 'w-shared', data: { data: { tasks: [] } } };
-  const ownerRow = { id: 'w-own', data: { data: { tasks: [] } } };
+/* ---------- resolution order (MF1 hardening: a NON-EMPTY own workspace
+   always wins — a membership row can be planted by any workspace owner,
+   so membership wins only when the viewer's own row is missing/empty) ---------- */
+test('pickWorkspaceTarget prefers a NON-EMPTY own workspace over a planted membership', () => {
+  const memberRow = { id: 'w-attacker', data: { data: { tasks: [] } } };
+  const ownerRow = { id: 'w-own', data: { data: { tasks: [{ id: 't1' }] } } };
   const pick = pickWorkspaceTarget(memberRow, ownerRow, () => false);
+  assert.equal(pick.mode, 'owner');
+  assert.equal(pick.row.id, 'w-own');
+});
+
+test('pickWorkspaceTarget: membership wins when the own row is missing or empty (real invitee)', () => {
+  const memberRow = { id: 'w-shared', data: { data: { tasks: [] } } };
+  const orphan = { id: 'w-own', data: {} };
+  const pick = pickWorkspaceTarget(memberRow, orphan, r => !r || !r.data || !r.data.data || !Object.keys(r.data.data).length);
   assert.equal(pick.mode, 'member');
   assert.equal(pick.row.id, 'w-shared');
+  assert.deepEqual(
+    pickWorkspaceTarget(memberRow, null, () => false),
+    { row: memberRow, mode: 'member' },
+  );
 });
 
 test('pickWorkspaceTarget falls back to the owner row, then bootstrap', () => {
@@ -182,28 +196,44 @@ test('buildMemberUpdatePayload restores the owner me in the payload without muta
     views: { v: 1 },
     ui: { memberCtx: { wsId: 'w-shared', memberId: 'm2', ownerMe: 'm1' } },
   };
-  const payload = buildMemberUpdatePayload(S, 'm1');
+  const sharedPrefs = { theme: 'light', calendarIds: ['primary'] };
+  const payload = buildMemberUpdatePayload(S, 'm1', sharedPrefs);
   assert.equal(payload.data.me, 'm1', 'synced doc keeps the owner me');
   assert.deepEqual(payload.data.tasks, [{ id: 't1' }]);
   assert.deepEqual(payload.data.members, [ownerEntry, memberEntry]);
-  assert.equal(payload.prefs.theme, 'dark');
+  /* S2: the member's LOCAL prefs never ride the shared sync — the
+     hydrate-time shared snapshot is written back untouched. */
+  assert.deepEqual(payload.prefs, sharedPrefs, "member's local prefs (theme dark) must not leak into the shared doc");
   assert.deepEqual(payload.views, { v: 1 });
   assert.equal(S.data.me, 'm2', 'the viewer overlay is not mutated by building the payload');
 });
 
-function fakeUpdateClient({ updateErr = null, rpcId = null, insertErr = null } = {}) {
-  const calls = { updates: [], upserts: [], inserts: [], rpcs: [] };
+function fakeUpdateClient({ updateErr = null, rpcId = null, insertErr = null, updateRows = null, probeRow = null } = {}) {
+  const calls = { updates: [], upserts: [], inserts: [], rpcs: [], probes: [] };
   const client = {
     calls,
     from() {
       return {
         update(payload) {
-          const rec = { payload, eq: null, table: 'workspaces' };
+          const rec = { payload, eqs: [], table: 'workspaces' };
           calls.updates.push(rec);
+          const chain = {
+            eq(key, val) {
+              rec.eqs.push({ key, val });
+              return chain;
+            },
+            select() {
+              rec.selected = true;
+              return Promise.resolve({ data: updateRows, error: updateErr });
+            },
+          };
+          return chain;
+        },
+        select() {
+          calls.probes.push(1);
           return {
             eq(key, val) {
-              rec.eq = { key, val };
-              return Promise.resolve({ data: null, error: updateErr });
+              return { maybeSingle: async () => ({ data: probeRow, error: null }) };
             },
           };
         },
@@ -231,38 +261,78 @@ function fakeUpdateClient({ updateErr = null, rpcId = null, insertErr = null } =
   return client;
 }
 
-test('updateMemberWorkspaceDoc updates the shared row by id and never upserts by owner', async () => {
-  const client = fakeUpdateClient();
+test('updateMemberWorkspaceDoc updates the shared row by id with the updated_at precondition and never upserts by owner', async () => {
+  const client = fakeUpdateClient({ updateRows: [{ id: 'w-shared', updated_at: 'T2' }] });
   const S = { data: { me: 'm2', tasks: [] }, prefs: {}, views: {}, ui: {} };
-  await updateMemberWorkspaceDoc(client, 'w-shared', S, 'm1');
+  const row = await updateMemberWorkspaceDoc(client, 'w-shared', S, 'm1', { theme: 'light' }, 'T1');
   assert.equal(client.calls.upserts.length, 0, 'member sync must not take the owner upsert path');
   assert.equal(client.calls.updates.length, 1);
-  assert.deepEqual(client.calls.updates[0].eq, { key: 'id', val: 'w-shared' });
+  assert.deepEqual(client.calls.updates[0].eqs, [
+    { key: 'id', val: 'w-shared' },
+    { key: 'updated_at', val: 'T1' },
+  ]);
+  assert.equal(client.calls.updates[0].selected, true, 'the update must return the fresh row (syncedUpdatedAt tracking)');
+  assert.equal(row.updated_at, 'T2', 'the fresh updated_at rides back for the next precondition');
   assert.equal(client.calls.updates[0].payload.data.data.me, 'm1', 'row jsonb keeps the owner me (row.data.data.me)');
+});
+
+test('updateMemberWorkspaceDoc throws SYNC_CONFLICT on a stale snapshot (row still exists)', async () => {
+  const client = fakeUpdateClient({ updateRows: [], probeRow: { id: 'w-shared' } });
+  const S = { data: { me: 'm2', tasks: [] }, prefs: {}, views: {}, ui: {} };
+  await assert.rejects(
+    () => updateMemberWorkspaceDoc(client, 'w-shared', S, 'm1', {}, 'T1'),
+    e => e.code === 'SYNC_CONFLICT',
+  );
+});
+
+test('updateMemberWorkspaceDoc throws SYNC_REMOVED when the row is gone (removed member)', async () => {
+  const client = fakeUpdateClient({ updateRows: [], probeRow: null });
+  const S = { data: { me: 'm2', tasks: [] }, prefs: {}, views: {}, ui: {} };
+  await assert.rejects(
+    () => updateMemberWorkspaceDoc(client, 'w-shared', S, 'm1', {}, 'T1'),
+    e => e.code === 'SYNC_REMOVED',
+  );
 });
 
 test('updateMemberWorkspaceDoc throws honestly on failure', async () => {
   const client = fakeUpdateClient({ updateErr: { message: 'row-level security', code: '42501' } });
   const S = { data: { me: 'm2', tasks: [] }, prefs: {}, views: {}, ui: {} };
-  await assert.rejects(() => updateMemberWorkspaceDoc(client, 'w-shared', S, 'm1'), /row-level security/);
+  await assert.rejects(() => updateMemberWorkspaceDoc(client, 'w-shared', S, 'm1', {}, 'T1'), /row-level security/);
 });
 
 test('pushDocUpdate routes through update-by-id when the viewer is a member', async () => {
-  const client = fakeUpdateClient();
+  const client = fakeUpdateClient({ updateRows: [{ id: 'w-shared', updated_at: 'T2' }] });
   const S = {
     data: { me: 'm2', tasks: [] },
     prefs: {},
     views: {},
-    ui: { offline: false, memberCtx: { wsId: 'w-shared', memberId: 'm2', ownerMe: 'm1' } },
+    ui: { offline: false, syncedUpdatedAt: 'T1', sharedPrefsSnapshot: { theme: 'light' }, memberCtx: { wsId: 'w-shared', memberId: 'm2', ownerMe: 'm1' } },
   };
   const res = await pushDocUpdate(client, 'auth-member', S, 'Operance');
   assert.equal(res, 'ok');
   assert.equal(client.calls.upserts.length, 0, 'a member sync must never touch their own orphan row via upsert');
   assert.equal(client.calls.updates.length, 1);
-  assert.deepEqual(client.calls.updates[0].eq, { key: 'id', val: 'w-shared' });
+  assert.deepEqual(client.calls.updates[0].eqs, [
+    { key: 'id', val: 'w-shared' },
+    { key: 'updated_at', val: 'T1' },
+  ]);
+  assert.equal(S.ui.syncedUpdatedAt, 'T2', 'the precondition advances with each successful sync');
 });
 
-test('pushDocUpdate keeps the owner upsert path when no member context is set', async () => {
+test('pushDocUpdate reports the conflict honestly instead of marking success', async () => {
+  const client = fakeUpdateClient({ updateRows: [], probeRow: { id: 'w-shared' } });
+  const S = {
+    data: { me: 'm2', tasks: [] },
+    prefs: {},
+    views: {},
+    ui: { offline: false, syncedUpdatedAt: 'T1', sharedPrefsSnapshot: {}, memberCtx: { wsId: 'w-shared', memberId: 'm2', ownerMe: 'm1' } },
+  };
+  const res = await pushDocUpdate(client, 'auth-member', S, 'Operance');
+  assert.equal(res, 'conflict');
+  assert.equal(S.ui.offline, true, 'the conflict must trip the honest sync-failure state (no silent success)');
+});
+
+test('pushDocUpdate keeps the owner upsert path when the workspace was never synced', async () => {
   const client = fakeUpdateClient();
   const S = { data: { me: 'm1', tasks: [] }, prefs: {}, views: {}, ui: { offline: false } };
   const res = await pushDocUpdate(client, 'auth-owner', S, 'Operance');
@@ -272,6 +342,19 @@ test('pushDocUpdate keeps the owner upsert path when no member context is set', 
   assert.equal(client.calls.upserts[0].payload.owner_id, 'auth-owner');
 });
 
+test('pushDocUpdate takes the owner update-by-id path once a synced snapshot exists', async () => {
+  const client = fakeUpdateClient({ updateRows: [{ id: 'w-own', updated_at: 'T2' }] });
+  const S = { data: { me: 'm1', tasks: [] }, prefs: {}, views: {}, ui: { offline: false, wsId: 'w-own', syncedUpdatedAt: 'T1' } };
+  const res = await pushDocUpdate(client, 'auth-owner', S, 'Operance');
+  assert.equal(res, 'ok');
+  assert.equal(client.calls.upserts.length, 0, 'after bootstrap the owner syncs by id too (MF2 precondition)');
+  assert.equal(client.calls.updates.length, 1);
+  assert.deepEqual(client.calls.updates[0].eqs, [
+    { key: 'id', val: 'w-own' },
+    { key: 'updated_at', val: 'T1' },
+  ]);
+});
+
 /* ---------- pending promotion (owner hydrate heals pending invitees) ---------- */
 test('promotePendingMembers resolves, patches, and inserts membership rows', async () => {
   const client = fakeUpdateClient({ rpcId: 'auth-pat' });
@@ -279,7 +362,7 @@ test('promotePendingMembers resolves, patches, and inserts membership rows', asy
   const changed = await promotePendingMembers(client, 'w-shared', members, 'm1', 'auth-owner');
   assert.equal(changed, true);
   assert.equal(client.calls.rpcs.length, 1);
-  assert.deepEqual(client.calls.rpcs[0], { fn: 'atrium_find_user_id', args: { email: 'pat@operanceai.com' } });
+  assert.deepEqual(client.calls.rpcs[0], { fn: 'atrium_find_user_id', args: { p_workspace_id: 'w-shared', p_email: 'pat@operanceai.com' } });
   assert.deepEqual(client.calls.inserts, [{ workspace_id: 'w-shared', user_id: 'auth-pat' }]);
   assert.equal(members[1].authUserId, 'auth-pat');
   assert.equal('pending' in members[1], false);

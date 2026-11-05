@@ -1590,7 +1590,7 @@ A.submitInvite = async () => {
   for (const email of [...fresh, ...upgrades.map(u => u.email)]) {
     let authUserId = null;
     try {
-      authUserId = await findAuthUserId(sb, email);
+      authUserId = await findAuthUserId(sb, S.ui.wsId, email);
     } catch (err) {
       toast(`Couldn't check ${esc(email)} — ${errMessage(err)}`, { kind: 'err' });
       return;

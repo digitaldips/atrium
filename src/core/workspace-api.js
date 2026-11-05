@@ -31,8 +31,11 @@ export function workspaceRowToDoc(row) {
 /* A row needs bootstrapping when it is missing or carries no workspace
    document (e.g. first login before onboarding has ever finished). */
 export function needsBootstrap(row) {
-  const doc = workspaceRowToDoc(row);
-  return !doc || !doc.data || !Array.isArray(doc.data.tasks);
+  /* S4 hardening: bootstrap ONLY an effectively empty row (the '{}' insert
+     default). A row that merely lacks tasks (corrupt/partial write) must
+     never be annihilated by a seed re-bootstrap. */
+  const inner = row && row.data && row.data.data;
+  return !inner || typeof inner !== 'object' || !Object.keys(inner).length;
 }
 
 /* ---------- error copy ---------- */
@@ -168,10 +171,11 @@ export async function loadMemberWorkspace(client, userId) {
 }
 
 /* Resolve a platform email to an auth uuid via the owner-gated RPC
-   (migration 0008). Returns the uuid, or null when the email has never
+   (migration 0008, tightened by 0009: the caller must OWN the workspace
+   they invite into). Returns the uuid, or null when the email has never
    signed in (caller decides: pending invite vs honest error). */
-export async function findAuthUserId(client, email) {
-  const { data, error } = await client.rpc('atrium_find_user_id', { email });
+export async function findAuthUserId(client, wsId, email) {
+  const { data, error } = await client.rpc('atrium_find_user_id', { p_workspace_id: wsId, p_email: email });
   if (error) throw new Error(errMessage(error));
   return data || null;
 }
@@ -219,20 +223,55 @@ export async function signOutUser(client) {
    shared document — doc.me identifies the OWNER. Two writers are LWW at
    doc granularity by design (ADR 0003): the last debounced save wins the
    whole doc; per-surface tables (docs/chat) write Postgres directly. */
-export function buildMemberUpdatePayload(S, ownerMe) {
-  return buildDocPayload({ ...S.data, me: ownerMe }, S.prefs, S.views);
+export function buildMemberUpdatePayload(S, ownerMe, sharedPrefs) {
+  /* S2: the member's LOCAL prefs (theme, their Google calendarIds) never
+     ride the shared sync — the hydrate-time shared snapshot is written
+     back untouched, so a member cannot rewrite the owner's prefs. */
+  return buildDocPayload({ ...S.data, me: ownerMe }, sharedPrefs || S.prefs, S.views);
 }
 
-/* MEMBER sync path: update the shared workspace row BY ID. This must
-   never take the owner-keyed upsert — a member upserting by their own
-   owner_id would touch their orphan bootstrap row, never the shared doc
-   (AC3). Uses the member_doc_update policy (migration 0008). */
-export async function updateMemberWorkspaceDoc(client, wsId, S, ownerMe) {
-  const { error } = await client
-    .from(WORKSPACES_TABLE)
-    .update({ data: buildMemberUpdatePayload(S, ownerMe) })
-    .eq('id', wsId);
+/* MF2 conflict/removal codes: the sync paths distinguish "someone else
+   wrote first" from "you were removed" so neither can pass silently. */
+export const SYNC_CONFLICT = 'SYNC_CONFLICT';
+export const SYNC_REMOVED = 'SYNC_REMOVED';
+
+/* MEMBER sync path: update the shared workspace row BY ID, guarded by the
+   updated_at precondition (MF2) — a stale session snapshot can never
+   silently revert another member's committed writes; the loser gets an
+   honest conflict and stops syncing until they reload. This must never
+   take the owner-keyed upsert (AC3). Uses the member_doc_update policy
+   (migration 0008). */
+export async function updateMemberWorkspaceDoc(client, wsId, S, ownerMe, sharedPrefs, expectedUpdatedAt) {
+  const payload = { data: buildMemberUpdatePayload(S, ownerMe, sharedPrefs) };
+  let q = client.from(WORKSPACES_TABLE).update(payload).eq('id', wsId);
+  if (expectedUpdatedAt) q = q.eq('updated_at', expectedUpdatedAt);
+  const { data, error } = await q.select();
   if (error) throw new Error(errMessage(error));
+  if (!data || !data.length) {
+    /* 0 rows = removed (S3) or stale (MF2): probe the row to tell them apart. */
+    const probe = await client.from(WORKSPACES_TABLE).select('id').eq('id', wsId).maybeSingle();
+    const e = new Error(
+      !probe.data ? 'You were removed from this workspace — reload.' : 'This workspace changed by another member — reload to get their changes.',
+    );
+    e.code = !probe.data ? SYNC_REMOVED : SYNC_CONFLICT;
+    throw e;
+  }
+  return data[0];
+}
+
+/* OWNER sync path after bootstrap: update by id with the same MF2
+   precondition (the bootstrap-creation case keeps the upsert). */
+export async function updateOwnerWorkspaceDoc(client, wsId, payload, expectedUpdatedAt) {
+  let q = client.from(WORKSPACES_TABLE).update({ data: payload }).eq('id', wsId);
+  if (expectedUpdatedAt) q = q.eq('updated_at', expectedUpdatedAt);
+  const { data, error } = await q.select();
+  if (error) throw new Error(errMessage(error));
+  if (!data || !data.length) {
+    const e = new Error('This workspace changed by another member — reload to get their changes.');
+    e.code = SYNC_CONFLICT;
+    throw e;
+  }
+  return data[0];
 }
 
 /* One sync step: upsert the current doc triple for an owner, or update
@@ -247,11 +286,26 @@ export async function pushDocUpdate(client, userId, S, name) {
   if (!client || !userId) return 'skipped';
   try {
     const ctx = S.ui && S.ui.memberCtx;
-    if (ctx && ctx.wsId) await updateMemberWorkspaceDoc(client, ctx.wsId, S, ctx.ownerMe);
-    else await upsertWorkspaceDoc(client, userId, buildDocPayload(S.data, S.prefs, S.views), name);
+    if (ctx && ctx.wsId) {
+      const row = await updateMemberWorkspaceDoc(client, ctx.wsId, S, ctx.ownerMe, S.ui.sharedPrefsSnapshot, S.ui.syncedUpdatedAt);
+      if (row && row.updated_at) S.ui.syncedUpdatedAt = row.updated_at;
+    } else if (S.ui.wsId && S.ui.syncedUpdatedAt) {
+      /* MF2: after bootstrap the owner syncs by id with the same
+         updated_at precondition — a second session of the same account
+         (or anything else) writing first yields an honest conflict. */
+      const row = await updateOwnerWorkspaceDoc(client, S.ui.wsId, buildDocPayload(S.data, S.prefs, S.views), S.ui.syncedUpdatedAt);
+      if (row && row.updated_at) S.ui.syncedUpdatedAt = row.updated_at;
+    } else {
+      const up = await upsertWorkspaceDoc(client, userId, buildDocPayload(S.data, S.prefs, S.views), name);
+      if (up && up.updated_at) S.ui.syncedUpdatedAt = up.updated_at;
+    }
     markSyncSuccess(S);
     return 'ok';
   } catch (err) {
+    if (err && (err.code === SYNC_CONFLICT || err.code === SYNC_REMOVED)) {
+      markSyncFailure(S, err); /* offline flag: changes are NOT syncing */
+      return err.code === SYNC_CONFLICT ? 'conflict' : 'removed';
+    }
     markSyncFailure(S, err);
     return 'failed';
   }
@@ -279,7 +333,7 @@ export async function promotePendingMembers(client, wsId, members, ownerMemberId
   for (const m of pending) {
     let uid;
     try {
-      uid = await findAuthUserId(client, m.email);
+      uid = await findAuthUserId(client, wsId, m.email);
     } catch {
       continue; /* rpc unavailable: retry on the next hydrate */
     }

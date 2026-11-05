@@ -126,3 +126,27 @@ auth uuids and task assignees use doc member ids.
   active + membership row 2).
 - Wesley's live row untouched by all probes; zero-loss proof on a fetched
   copy (above).
+
+## Consequences (tightened by the T6 quality gate, 2026-11-05)
+
+- **Hijack chain broken at resolution**: any workspace owner can plant a
+  membership row for any user (`owner_manages_members`), and the
+  `atrium_find_user_id` RPC resolves emails (now gated to the caller's OWN
+  workspace, migration 0009). Resolution therefore prefers a NON-EMPTY own
+  workspace; membership-wins only for viewers whose own row is missing or
+  still the empty bootstrap default (the real-invitee case). Trade-off: an
+  invitee who actively uses their own workspace stays in it — accepted.
+- **Shared-doc LWW got an honest boundary**: syncs carry an `updated_at`
+  precondition (member AND owner update-by-id paths; bootstrap keeps the
+  upsert). A stale session snapshot can no longer silently revert another
+  member's committed writes — the loser trips the sync-failure state with a
+  reload prompt. The loss window is now the write race, not the session.
+- **Member prefs are session-local**: the member sync writes the
+  hydrate-time shared-prefs snapshot, so a member's theme/Google
+  calendarIds can never rewrite the owner's prefs. Member-local prefs
+  persistence is a follow-up.
+- **Email→uuid enumeration**: the RPC is owner-gated per workspace, but any
+  owner can still resolve platform emails — accepted (domain-internal,
+  invitation context); revisit with a consent/token invite flow.
+- **Removed members**: a removed member's sync hits 0 rows and stops with an
+  honest "you were removed" state instead of a silent no-op.
