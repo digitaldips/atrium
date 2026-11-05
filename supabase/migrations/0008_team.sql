@@ -39,7 +39,9 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'atrium_find_user_id: workspace owners only';
   END IF;
-  SELECT u.id INTO v_id FROM auth.users u WHERE lower(u.email) = lower(email) LIMIT 1;
+  -- Qualify the parameter with the function name: an unqualified `email`
+  -- collides with auth.users.email (plpgsql variable_conflict=error).
+  SELECT u.id INTO v_id FROM auth.users u WHERE lower(u.email) = lower(atrium_find_user_id.email) LIMIT 1;
   RETURN v_id;
 END;
 $$;

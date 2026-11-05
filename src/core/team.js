@@ -61,15 +61,37 @@ export function makeInviteEntry({ members, email, authUserId, team = '', id } = 
 }
 
 /* Split invite targets into fresh vs already-in-the-workspace addresses
-   (case-insensitive; pending entries count as members too). */
+   (case-insensitive; pending entries count as members too). A doc member
+   with NEITHER authUserId NOR pending is pre-T6 demo residue — it is not
+   a duplicate: the invite UPGRADES that entry in place (upgrades[]),
+   which is exactly the live state of Wesley's doc for jonathan@… . */
 export function splitInviteEmails(members, emails) {
-  const seen = new Set((members || []).map(m => (m.email || '').toLowerCase()));
+  const real = (members || []).filter(m => m && m.email && (m.authUserId || m.pending));
+  const legacy = (members || []).filter(m => m && m.email && !m.authUserId && !m.pending);
+  const seen = new Set(real.map(m => m.email.toLowerCase()));
+  const legacyByEmail = new Map(legacy.map(m => [m.email.toLowerCase(), m]));
   const fresh = [];
   const dups = [];
+  const upgrades = [];
   for (const e of emails || []) {
-    (seen.has(e.toLowerCase()) ? dups : fresh).push(e);
+    const k = e.toLowerCase();
+    if (seen.has(k)) dups.push(e);
+    else if (legacyByEmail.has(k)) upgrades.push({ email: e, entry: legacyByEmail.get(k) });
+    else fresh.push(e);
   }
-  return { fresh, dups };
+  return { fresh, dups, upgrades };
+}
+
+/* Upgrade a legacy demo entry to a real member: stamp the identity,
+   mark active — in place, by reference (doc-local id, role, name, team
+   and any references stay untouched). Idempotent; returns whether
+   anything changed. */
+export function upgradeLegacyMember(member, authUserId) {
+  if (!member || !authUserId) return false;
+  if (member.authUserId === authUserId && member.status === 'active') return false;
+  member.authUserId = authUserId;
+  member.status = 'active';
+  return true;
 }
 
 /* ---------- identity bridge ---------- */
@@ -106,10 +128,13 @@ export function pickMemberWorkspace(rows) {
   return ws[0] || null;
 }
 
-/* Resolution order for hydrate: (a) a workspace I am a MEMBER of,
-   (b) my own owner row, (c) bootstrap (row null). */
-export function pickWorkspaceTarget(memberRow, ownerRow) {
+/* Resolution order for hydrate (AC2): (a) a workspace I am a MEMBER of,
+   (b) my owner row — loaded when it holds a document, (c) bootstrap when
+   it is missing or empty (mode 'bootstrap'). needsBootstrapFn is the
+   caller's needsBootstrap — injected so this stays dependency-free. */
+export function pickWorkspaceTarget(memberRow, ownerRow, needsBootstrapFn) {
+  const nb = needsBootstrapFn || (() => false);
   if (memberRow) return { row: memberRow, mode: 'member' };
-  if (ownerRow) return { row: ownerRow, mode: 'owner' };
-  return { row: null, mode: 'bootstrap' };
+  if (!ownerRow || nb(ownerRow)) return { row: ownerRow, mode: 'bootstrap' };
+  return { row: ownerRow, mode: 'owner' };
 }

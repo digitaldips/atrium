@@ -229,7 +229,7 @@ export async function hydrateWorkspace(session) {
        bootstraps against the shared doc. */
     const memberRow = await loadMemberWorkspace(sb, session.user.id);
     const ownerRow = memberRow ? null : await loadWorkspaceDoc(sb, session.user.id);
-    const target = pickWorkspaceTarget(memberRow, ownerRow);
+    const target = pickWorkspaceTarget(memberRow, ownerRow, needsBootstrap);
     if (target.mode === 'member') {
       const row = target.row;
       const doc = workspaceRowToDoc(row);
@@ -258,7 +258,7 @@ export async function hydrateWorkspace(session) {
       save();
       return 'loaded';
     }
-    if (target.mode === 'owner' && needsBootstrap(target.row)) {
+    if (target.mode === 'bootstrap') {
       S.ui.memberCtx = null;
       S.data = seed();
       S.views = {};
@@ -305,6 +305,10 @@ export async function hydrateWorkspace(session) {
     save();
     return 'loaded';
   } catch (err) {
+    /* Keep the raw failure visible in the console — the login surface only
+       shows the mapped, user-facing copy. */
+    console.error('[atrium] hydrate failed:', err);
+    window.__hydrateErr = String((err && err.stack) || err);
     lastHydrateError = markSyncFailure(S, err);
     return 'offline';
   }

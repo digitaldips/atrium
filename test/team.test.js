@@ -9,6 +9,7 @@ import {
   splitInviteEmails,
   findMemberByAuth,
   applyPendingResolution,
+  upgradeLegacyMember,
   pickMemberWorkspace,
   pickWorkspaceTarget,
 } from '../src/core/team.js';
@@ -22,17 +23,27 @@ const pendingEntry = { id: 'm3', name: 'Pat', email: 'pat@operanceai.com', role:
 test('pickWorkspaceTarget prefers the membership row over the owner row', () => {
   const memberRow = { id: 'w-shared', data: { data: { tasks: [] } } };
   const ownerRow = { id: 'w-own', data: { data: { tasks: [] } } };
-  const pick = pickWorkspaceTarget(memberRow, ownerRow);
+  const pick = pickWorkspaceTarget(memberRow, ownerRow, () => false);
   assert.equal(pick.mode, 'member');
   assert.equal(pick.row.id, 'w-shared');
 });
 
 test('pickWorkspaceTarget falls back to the owner row, then bootstrap', () => {
   const ownerRow = { id: 'w-own', data: { data: { tasks: [] } } };
-  assert.deepEqual(pickWorkspaceTarget(null, ownerRow), { row: ownerRow, mode: 'owner' });
-  const none = pickWorkspaceTarget(null, null);
+  assert.deepEqual(
+    pickWorkspaceTarget(null, ownerRow, () => false),
+    { row: ownerRow, mode: 'owner' },
+  );
+  const none = pickWorkspaceTarget(null, null, () => false);
   assert.equal(none.row, null);
   assert.equal(none.mode, 'bootstrap');
+});
+
+test('pickWorkspaceTarget bootstraps an owner row without a usable document', () => {
+  const empty = { id: 'w-own', data: {} };
+  const pick = pickWorkspaceTarget(null, empty, r => !r || !r.data || !r.data.data || !Array.isArray(r.data.data.tasks));
+  assert.equal(pick.mode, 'bootstrap');
+  assert.equal(pick.row, empty);
 });
 
 test('pickMemberWorkspace picks the most recently updated membership', () => {
@@ -116,6 +127,32 @@ test('splitInviteEmails separates fresh addresses from duplicates (case-insensit
   const { fresh, dups } = splitInviteEmails(members, ['JONATHAN@operanceai.com', 'pat@operanceai.com', 'new@operanceai.com']);
   assert.deepEqual(fresh, ['new@operanceai.com']);
   assert.deepEqual(dups, ['JONATHAN@operanceai.com', 'pat@operanceai.com']);
+});
+
+/* Legacy demo invites (pre-T6): doc members with neither authUserId nor
+   pending are display-only residue — they must be UPGRADED by the invite,
+   not treated as duplicates (Wesley's live doc carries exactly such an
+   entry for jonathan@operanceai.com). */
+const legacyEntry = { id: 'mufx73z', name: 'Jonathan', email: 'jonathan@operanceai.com', role: 'Admin', status: 'invited' };
+
+test('splitInviteEmails offers legacy unlinked entries for upgrade instead of refusing', () => {
+  const { fresh, dups, upgrades } = splitInviteEmails([ownerEntry, legacyEntry], ['JONATHAN@operanceai.com', 'new@operanceai.com']);
+  assert.deepEqual(fresh, ['new@operanceai.com']);
+  assert.deepEqual(dups, [], 'a legacy entry is not a duplicate');
+  assert.deepEqual(upgrades, [{ email: 'JONATHAN@operanceai.com', entry: legacyEntry }]);
+});
+
+test('upgradeLegacyMember stamps the identity in place, by reference, idempotently', () => {
+  const e = { ...legacyEntry };
+  assert.equal(upgradeLegacyMember(e, 'auth-member'), true);
+  assert.equal(e.authUserId, 'auth-member');
+  assert.equal(e.status, 'active');
+  assert.equal(e.id, 'mufx73z', 'the doc-local id is preserved (referential stability)');
+  assert.equal(e.role, 'Admin', 'display role is not rewritten');
+  assert.equal('pending' in e, false);
+  const ref = e;
+  assert.equal(upgradeLegacyMember(e, 'auth-member'), false, 'idempotent');
+  assert.equal(ref, e);
 });
 
 /* ---------- pending resolution (AC1: resolve authUserId at first sign-in) ---------- */

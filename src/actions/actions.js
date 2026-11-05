@@ -35,7 +35,7 @@ import {
   signOutUser,
   upsertWorkspaceDoc,
 } from '../core/workspace-api.js';
-import { makeInviteEntry, splitInviteEmails } from '../core/team.js';
+import { makeInviteEntry, splitInviteEmails, upgradeLegacyMember } from '../core/team.js';
 import { fileType, fsize } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
@@ -1576,17 +1576,18 @@ A.submitInvite = async () => {
     render();
     return;
   }
-  const { fresh, dups } = splitInviteEmails(D().members, list);
-  if (!fresh.length) {
+  const { fresh, dups, upgrades } = splitInviteEmails(D().members, list);
+  if (!fresh.length && !upgrades.length) {
     S.ui.errors.invite = `${dups[0]} is already in this workspace`;
     render();
     return;
   }
   /* Resolve each address against the platform (owner-gated RPC, 0008).
      Unresolved addresses become pending members — promoted by the
-     owner's hydrate once the person first signs in. */
+     owner's hydrate once the person first signs in. Legacy demo entries
+     (no authUserId/pending) are upgraded in place instead. */
   const targets = [];
-  for (const email of fresh) {
+  for (const email of [...fresh, ...upgrades.map(u => u.email)]) {
     let authUserId = null;
     try {
       authUserId = await findAuthUserId(sb, email);
@@ -1614,7 +1615,11 @@ A.submitInvite = async () => {
       const mine = mem(D().me);
       if (mine && !mine.authUserId) mine.authUserId = getCurrentUser();
       targets.forEach(t => {
-        if (!D().members.some(m => m.email.toLowerCase() === t.email.toLowerCase())) {
+        const existing = D().members.find(m => m && m.email && m.email.toLowerCase() === t.email.toLowerCase());
+        if (existing && !existing.authUserId && !existing.pending) {
+          /* Pre-T6 demo residue: upgrade the entry in place (id + role + references stay). */
+          upgradeLegacyMember(existing, t.authUserId);
+        } else if (!existing) {
           const e = makeInviteEntry({ members: D().members, email: t.email, authUserId: t.authUserId, team });
           if (e) D().members.push(e);
         }
@@ -1626,6 +1631,7 @@ A.submitInvite = async () => {
     render();
     const added = targets.length - pending.length;
     if (added) toast(`${added} member${added > 1 ? 's' : ''} added to ${esc(D().ws.name)}`);
+    if (upgrades.length) toast(`${upgrades.length} existing entr${upgrades.length > 1 ? 'ies' : 'y'} upgraded to full membership.`, { kind: 'info' });
     if (pending.length)
       toast(`${pending.length} pending — ${pending.map(t => esc(t.email)).join(', ')} will be added automatically when they first sign in.`, {
         kind: 'info',
