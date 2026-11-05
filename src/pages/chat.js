@@ -280,6 +280,12 @@ export function chatNewChannelModal(m, H) {
       <div class="field"><label class="label" for="chat-new-topic">Topic <span class="faint">(optional)</span></label>
         <input class="input" id="chat-new-topic" data-in="chatNewTopic" value="${esc(S.ui.chat?.newTopic || '')}" placeholder="What is this channel for?" maxlength="250">
       </div>
+      <div class="field"><label class="label" for="chat-new-kind">Visibility</label>
+        <select class="select" id="chat-new-kind" data-in="chatNewKind" aria-label="Channel visibility">
+          <option value="public" ${S.ui.chat?.newKind === 'private' ? '' : 'selected'}>Public — everyone in the workspace</option>
+          <option value="private" ${S.ui.chat?.newKind === 'private' ? 'selected' : ''}>Private — invited people only</option>
+        </select>
+      </div>
       <p class="faint" style="font-size:11.5px;margin:6px 0 0">You join the channel as its first member. #general cannot be created here — it exists by default.</p>
     </div>
     <div class="modal-f"><span class="sp"></span><button class="btn btn-secondary" data-a="closeModal">Cancel</button><button class="btn btn-primary" data-a="chatChannelCreateGo">Create channel</button></div>`;

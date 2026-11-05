@@ -116,10 +116,52 @@ ALTER TABLE public.chat_channels ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chat_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY chat_channels_member_all ON public.chat_channels
-  FOR ALL TO authenticated
-  USING (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id))
+CREATE POLICY chat_channels_read ON public.chat_channels
+  FOR SELECT TO authenticated
+  USING (
+    (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id))
+    AND (
+      (kind <> 'private' AND kind <> 'dm')
+      -- The creator sees their own private channel / DM before the member row lands
+      -- (PostgREST INSERT ... RETURNING must pass this SELECT policy).
+      OR created_by = auth.uid()
+      OR EXISTS (
+        SELECT 1 FROM public.chat_members cm
+        WHERE cm.channel_id = id AND cm.user_id = auth.uid()
+      )
+    )
+  );
+
+CREATE POLICY chat_channels_insert ON public.chat_channels
+  FOR INSERT TO authenticated
   WITH CHECK (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id));
+
+CREATE POLICY chat_channels_update ON public.chat_channels
+  FOR UPDATE TO authenticated
+  USING (
+    (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id))
+    AND (
+      kind = 'public'
+      OR EXISTS (
+        SELECT 1 FROM public.chat_members cm
+        WHERE cm.channel_id = id AND cm.user_id = auth.uid()
+      )
+    )
+  )
+  WITH CHECK (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id));
+
+CREATE POLICY chat_channels_delete ON public.chat_channels
+  FOR DELETE TO authenticated
+  USING (
+    (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id))
+    AND (
+      kind = 'public'
+      OR EXISTS (
+        SELECT 1 FROM public.chat_members cm
+        WHERE cm.channel_id = id AND cm.user_id = auth.uid()
+      )
+    )
+  );
 
 CREATE POLICY chat_members_member_all ON public.chat_members
   FOR ALL TO authenticated
@@ -187,3 +229,15 @@ CREATE POLICY chat_objects_member_scoped ON storage.objects
         AND (public.is_workspace_member(c.workspace_id) OR public.owns_workspace(c.workspace_id))
     )
   );
+
+-- Realtime INSERT delivery (postgres_changes) requires the table in the
+-- supabase_realtime publication — idempotent so re-runs are safe.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'chat_messages'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.chat_messages;
+  END IF;
+END $$;

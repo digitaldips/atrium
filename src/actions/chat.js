@@ -93,6 +93,10 @@ function needChat() {
 export async function ensureChatBootstrap() {
   const wsId = await ensureWsId();
   if (!wsId || !sb || !getCurrentUser()) return;
+  /* Workspace-wide realtime subscription lives here so the binding is
+     referenced inside this module — referenced only from render.js, the
+     bundler tree-shook the subscription out of the shipped bundle. */
+  syncChatChannel(wsId);
   if (CC.bootState !== 'idle' && CC.bootWs === wsId) return;
   CC.bootWs = wsId;
   CC.bootState = 'loading';
@@ -548,6 +552,7 @@ A.chatNewChannel = () => {
   if (!needChat()) return;
   S.ui.chat.newName = '';
   S.ui.chat.newTopic = '';
+  S.ui.chat.newKind = 'public';
   openModal({ type: 'chatNewChannel' });
 };
 
@@ -557,6 +562,9 @@ IN.chatNewName = el => {
 IN.chatNewTopic = el => {
   S.ui.chat.newTopic = el.value;
 };
+IN.chatNewKind = el => {
+  S.ui.chat.newKind = el.value === 'private' ? 'private' : 'public';
+};
 
 A.chatChannelCreateGo = async () => {
   if (!needChat()) return;
@@ -565,6 +573,7 @@ A.chatChannelCreateGo = async () => {
     toast('Give the channel a name.', { kind: 'info' });
     return;
   }
+  const kind = S.ui.chat.newKind === 'private' ? 'private' : 'public';
   const wsId = await ensureWsId();
   if (!wsId) {
     toast("Can't reach the server.", { kind: 'err' });
@@ -574,7 +583,7 @@ A.chatChannelCreateGo = async () => {
     .from('chat_channels')
     .insert({
       workspace_id: wsId,
-      kind: 'public',
+      kind,
       name,
       topic: (S.ui.chat.newTopic || '').trim().slice(0, 250),
       created_by: getCurrentUser(),
