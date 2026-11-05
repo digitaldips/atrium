@@ -71,6 +71,8 @@ export function modalHtml(m) {
       );
     case 'compose':
       return wrap('', composeModal(m, H));
+    case 'mailCompose':
+      return wrap('', mailComposeModal(m, H));
     case 'geventForm':
       return wrap('', gEventModal(m, H));
     case 'docsMove':
@@ -329,6 +331,24 @@ export function composeModal(m, H) {
     ${f.error ? `<div class="alert danger">${ic('triangle-alert', 14)}<span>${esc(f.error)}</span></div>` : ''}
   </form>
   <div class="modal-f"><span class="faint hide-m" style="font-size:11.5px"><kbd>${MOD}</kbd> <kbd>↵</kbd></span><span class="sp"></span><button class="btn btn-secondary" data-a="gSaveDraft" ${f.saving ? 'disabled aria-busy="true"' : ''}>${ic('file', 14)}${draftId ? 'Update draft' : 'Save draft'}</button><button class="btn btn-secondary" data-a="closeModal">Cancel</button><button class="btn btn-primary" data-a="gSend" ${f.sending ? 'disabled aria-busy="true"' : ''}>${f.sending ? 'Sending…' : m.reply ? 'Send reply' : 'Send'}</button></div>`;
+}
+
+/* ---------- Shared mail compose / reply / draft (T3 — mock send) ---------- */
+/* State in S.ui.mForm (actions/mail.js); values are re-read from the DOM
+   on submit. Send stores the message in the shared workspace mailbox —
+   honest copy, no fake kbd hint (MOD+Enter is wired for the task modal
+   only). */
+export function mailComposeModal(m, H) {
+  const f = S.ui.mForm;
+  const title = f.replyTo ? 'Reply' : f.draftId ? 'Draft' : 'New message';
+  return `${H(title, 'Stored in the shared workspace mailbox — a mock send, nothing is emailed.')}
+  <form class="modal-b" data-submit="mSend" style="gap:10px">
+    <div class="field"><label class="label" for="m-to">To</label><input class="input" id="m-to" data-in="mForm" data-f="to" value="${esc(f.to)}" placeholder="name@company.com, another@company.com" autofocus></div>
+    <div class="field"><label class="label" for="m-subject">Subject</label><input class="input" id="m-subject" data-in="mForm" data-f="subject" value="${esc(f.subject)}" placeholder="Subject"></div>
+    <div class="field grow"><label class="label" for="m-body">Message</label><textarea class="textarea" id="m-body" data-in="mForm" data-f="body" rows="9" placeholder="Write your message…">${esc(f.body)}</textarea></div>
+    ${f.error ? `<div class="alert danger">${ic('triangle-alert', 14)}<span>${esc(f.error)}</span></div>` : ''}
+  </form>
+  <div class="modal-f"><span class="sp"></span><button class="btn btn-secondary" data-a="mSaveDraft" ${f.sending ? 'disabled' : ''}>${ic('file', 14)}${f.draftId ? 'Update draft' : 'Save draft'}</button><button class="btn btn-secondary" data-a="closeModal">Cancel</button><button class="btn btn-primary" data-a="mSend" ${f.sending ? 'disabled aria-busy="true"' : ''}>${f.sending ? 'Sending…' : m.reply ? 'Send reply' : 'Send'}</button></div>`;
 }
 
 /* ---------- Google Calendar event create / edit (edit shares this modal) ---------- */

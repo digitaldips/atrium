@@ -433,6 +433,19 @@ export function popHtml(p) {
         .map(m => `<button class="mi" data-a="bulkSet" data-f="assignee" data-v="${m.id}">${av(m.id || null, 'sm', false)}${esc(m.name)}</button>`)
         .join('');
       break;
+    case 'mailfolder': {
+      /* Move a shared-mail thread to another folder (thread id on S.ui.pop).
+         Starred is virtual and cannot hold a thread; the current folder is
+         omitted. */
+      const mt = (D().mail?.threads || []).find(x => x && x.id === p.id);
+      const folders = (D().mail?.folders || []).filter(f => f.id !== 'f_starred' && f.id !== mt?.folderId);
+      inner = popList(
+        folders.map(f => ({ id: f.id, name: f.name, html: ic(f.icon || 'folder', 14), act: 'mMovePick' })),
+        { search: 'Search folders…' },
+      );
+      style = 'width:240px';
+      break;
+    }
   }
   if (!inner) return '';
   return `<div class="pop floating ${cls} ${S.ui.fx.pop ? 'enter' : ''}" role="menu" style="left:${p.x}px;top:${p.y}px;${style}" data-pop-root>${inner}</div>`;

@@ -4,6 +4,7 @@ import { PCOLORS, TEAMS_SEED } from './constants.js';
 import { seed } from '../data/seed.js';
 import { ensureCrmData } from './crm.js';
 import { ensureDocShape } from './links.js';
+import { ensureMailData } from './mail.js';
 import { ensureNotes } from './notes.js';
 import { ensureOrgsData } from './orgs.js';
 import { sb, getCurrentUser, setCurrentUser } from './supabase.js';
@@ -158,6 +159,7 @@ export function bindCacheToUser(userId) {
     ensureDocShape(S.data); // links[] (CRM linkage) — zero-loss, same contract
     ensureNotes(S.data); // notes[] (Notes module) — zero-loss, same contract
     ensureOrgsData(S.data); // orgs[] (Organisations) — zero-loss, same contract
+    ensureMailData(S.data); // doc.mail (shared Mail, T3) — zero-loss, same contract
     ensureGooglePrefs(S.prefs);
     return true;
   }
@@ -203,6 +205,7 @@ export async function hydrateWorkspace(session) {
       ensureDocShape(S.data);
       ensureNotes(S.data);
       ensureOrgsData(S.data);
+      ensureMailData(S.data);
       ensureGooglePrefs(S.prefs);
       const up = await upsertWorkspaceDoc(sb, session.user.id, buildDocPayload(S.data, S.prefs, S.views), D().ws?.name);
       if (up?.id) S.ui.wsId = up.id;
@@ -223,6 +226,7 @@ export async function hydrateWorkspace(session) {
     ensureDocShape(S.data);
     ensureNotes(S.data);
     ensureOrgsData(S.data);
+    ensureMailData(S.data);
     ensureGooglePrefs(S.prefs);
     save();
     return 'loaded';

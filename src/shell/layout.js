@@ -24,6 +24,7 @@ import { pageSearch } from '../pages/search.js';
 import { pageNotes } from '../pages/notes.js';
 import { pageDocs } from '../pages/docs.js';
 import { pageChat } from '../pages/chat.js';
+import { pageMail } from '../pages/mail.js';
 import { page404, stateFailed } from '../pages/errors.js';
 import { pageProject } from '../pages/project.js';
 import { pageWsCalendar } from '../views/calendar.js';
@@ -58,6 +59,7 @@ export function renderPage() {
       notes: pageNotes,
       docs: pageDocs,
       chat: pageChat,
+      mail: pageMail,
       overview: pageOverview,
       projects: pageProjects,
       project: pageProject,
@@ -95,6 +97,7 @@ export function renderSidebar() {
     d = D();
   const unreadInbox = d.notifs.filter(n => !n.read && n.type !== 'update').length;
   const unreadAll = d.notifs.filter(n => !n.read).length;
+  const unreadMail = (d.mail?.threads || []).filter(t => t.unread && t.folderId !== 'f_trash').length;
   const myOpen = allTasks().filter(t => t.assignee === d.me && t.status !== 'done' && t.due && diffD(parse(t.due), TODAY) <= 0).length;
   const projs = visibleProjects().filter(p => p.status !== 'complete');
   const inProj = u.route === 'project' ? u.params.id : null;
@@ -124,6 +127,7 @@ export function renderSidebar() {
         ${sItem('tasks', 'Tasks', 'list-checks')}
         ${sItem('docs', 'Docs', 'file-text')}
         ${sItem('chat', 'Chat', 'message-square')}
+        ${sItem('mail', 'Mail', 'mail', { ct: unreadMail || '' })}
         ${sItem('calendar', 'Calendar', 'calendar')}
         ${sItem('timeline', 'Timeline', 'chart-gantt')}
         ${sItem('members', 'Members', 'users')}
