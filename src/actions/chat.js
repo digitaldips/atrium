@@ -289,6 +289,7 @@ IN.chatCompose = el => {
 };
 
 KEY.chatSend = () => A.chatSend();
+KEY.chatReply = () => A.chatReply();
 
 A.chatSend = async () => {
   const channelId = CC.selId;
