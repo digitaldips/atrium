@@ -578,7 +578,13 @@ async function token(req) {
       await srPatch(`oauth_grants?id=eq.${grantId}`, { revoked_at: iso(now) });
       return oerr(req, 'invalid_grant');
     }
-    await srPatch(`oauth_tokens?refresh_hash=eq.${await sha256Hex(b.refresh_token)}`, { refresh_used_at: iso(now) });
+    /* Single-use claim must be conditional: two concurrent refreshes of the
+       same token must not both win (the loser burns the grant, like a replay). */
+    const claim = await srPatch(`oauth_tokens?refresh_hash=eq.${await sha256Hex(b.refresh_token)}&refresh_used_at=is.null`, { refresh_used_at: iso(now) });
+    if (!Array.isArray(claim) || claim.length === 0) {
+      await srPatch(`oauth_grants?id=eq.${grantId}`, { revoked_at: iso(now) });
+      return oerr(req, 'invalid_grant');
+    }
   } else {
     return oerr(req, 'unsupported_grant_type');
   }
