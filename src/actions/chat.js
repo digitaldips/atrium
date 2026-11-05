@@ -196,8 +196,10 @@ async function markRead(channelId) {
   if (error) toast(`Could not mark the channel read — ${errMessage(error)}`, { kind: 'err' });
 }
 
-/* After MY OWN insert: my read catches up to the trigger-bumped counter. */
-async function syncOwnRead(channelId) {
+/* After an insert of mine (send / reply / attach): my read catches up to
+   the trigger-bumped counter. Also fired on realtime arrivals while the
+   conversation is open — viewing it IS reading it. */
+async function syncMyRead(channelId) {
   const c = CC.channels.find(x => x.id === channelId);
   if (!c || !sb || !getCurrentUser()) return;
   const { data, error } = await sb.from('chat_channels').select('message_count').eq('id', channelId).maybeSingle();
@@ -315,7 +317,7 @@ async function insertChatMessage({ channel_id, body, parent_id = null }) {
   if (m && !CC.messages.some(x => x.id === m.id)) CC.messages.push(m);
   render();
   scrollChatBottom();
-  await syncOwnRead(channel_id);
+  await syncMyRead(channel_id);
   return m;
 }
 
@@ -703,10 +705,14 @@ function onChatInsert(payload) {
   if (!row || !row.id) return;
   const m = makeChatMessage(row);
   if (!m || m.deleted_at) return;
-  if (CC.selId === m.channel_id && !CC.messages.some(x => x.id === m.id)) {
-    CC.messages.push(m);
+  if (CC.selId === m.channel_id) {
+    if (!CC.messages.some(x => x.id === m.id)) CC.messages.push(m);
     render();
     setTimeout(scrollChatBottom, 20);
+    /* Viewing the conversation IS reading it: advance my read pointer to
+       the trigger-bumped counter, like a fresh open does. */
+    syncMyRead(m.channel_id);
+    return;
   }
   scheduleRailRefresh();
 }

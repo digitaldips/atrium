@@ -157,39 +157,33 @@ GRANT ALL ON public.chat_channels, public.chat_members, public.chat_messages TO 
 -- pair). Segments 3+4 are the message id and the sanitized file name —
 -- the client sanitizes the name (safeAttachmentName) and the ref is
 -- re-validated at every hydration (validateChatFileRef).
+-- NOTE the qualified storage.objects.name: inside the EXISTS the bare
+-- `name` would bind to chat_channels.name (scope shadowing) and the
+-- policy would silently deny everything.
 INSERT INTO storage.buckets (id, name, public, file_size_limit)
 VALUES ('chat', 'chat', false, 10485760)
 ON CONFLICT (id) DO UPDATE
   SET public = false,
       file_size_limit = 10485760;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname = 'storage'
-      AND tablename = 'objects'
-      AND policyname = 'chat_objects_member_scoped'
-  ) THEN
-    CREATE POLICY chat_objects_member_scoped ON storage.objects
-      FOR ALL TO authenticated
-      USING (
-        bucket_id = 'chat'
-        AND EXISTS (
-          SELECT 1 FROM public.chat_channels c
-          WHERE c.workspace_id::text = COALESCE((storage.foldername(name))[1], '')
-            AND c.id::text = COALESCE((storage.foldername(name))[2], '')
-            AND (public.is_workspace_member(c.workspace_id) OR public.owns_workspace(c.workspace_id))
-        )
-      )
-      WITH CHECK (
-        bucket_id = 'chat'
-        AND EXISTS (
-          SELECT 1 FROM public.chat_channels c
-          WHERE c.workspace_id::text = COALESCE((storage.foldername(name))[1], '')
-            AND c.id::text = COALESCE((storage.foldername(name))[2], '')
-            AND (public.is_workspace_member(c.workspace_id) OR public.owns_workspace(c.workspace_id))
-        )
-      );
-  END IF;
-END $$;
+DROP POLICY IF EXISTS chat_objects_member_scoped ON storage.objects;
+CREATE POLICY chat_objects_member_scoped ON storage.objects
+  FOR ALL TO authenticated
+  USING (
+    bucket_id = 'chat'
+    AND EXISTS (
+      SELECT 1 FROM public.chat_channels c
+      WHERE c.workspace_id::text = COALESCE((storage.foldername(storage.objects.name))[1], '')
+        AND c.id::text = COALESCE((storage.foldername(storage.objects.name))[2], '')
+        AND (public.is_workspace_member(c.workspace_id) OR public.owns_workspace(c.workspace_id))
+    )
+  )
+  WITH CHECK (
+    bucket_id = 'chat'
+    AND EXISTS (
+      SELECT 1 FROM public.chat_channels c
+      WHERE c.workspace_id::text = COALESCE((storage.foldername(storage.objects.name))[1], '')
+        AND c.id::text = COALESCE((storage.foldername(storage.objects.name))[2], '')
+        AND (public.is_workspace_member(c.workspace_id) OR public.owns_workspace(c.workspace_id))
+    )
+  );
