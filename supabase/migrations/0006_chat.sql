@@ -112,6 +112,19 @@ CREATE TRIGGER chat_messages_channel_bump
 -- is_workspace_member (SECURITY DEFINER helpers from 0001 — reused, not
 -- redefined). chat_messages has no workspace_id; the policy EXISTSes the
 -- channel, whose RLS terminates in the definer helpers (no recursion).
+-- chat_is_member: the channel/member policies reference EACH OTHER's tables,
+-- so the membership check must be SECURITY DEFINER to terminate the cycle.
+CREATE OR REPLACE FUNCTION public.chat_is_member(ch uuid)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.chat_members
+    WHERE channel_id = ch AND user_id = auth.uid()
+  );
+$$;
+
 ALTER TABLE public.chat_channels ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chat_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
@@ -125,10 +138,7 @@ CREATE POLICY chat_channels_read ON public.chat_channels
       -- The creator sees their own private channel / DM before the member row lands
       -- (PostgREST INSERT ... RETURNING must pass this SELECT policy).
       OR created_by = auth.uid()
-      OR EXISTS (
-        SELECT 1 FROM public.chat_members cm
-        WHERE cm.channel_id = id AND cm.user_id = auth.uid()
-      )
+      OR public.chat_is_member(id)
     )
   );
 
@@ -140,13 +150,7 @@ CREATE POLICY chat_channels_update ON public.chat_channels
   FOR UPDATE TO authenticated
   USING (
     (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id))
-    AND (
-      kind = 'public'
-      OR EXISTS (
-        SELECT 1 FROM public.chat_members cm
-        WHERE cm.channel_id = id AND cm.user_id = auth.uid()
-      )
-    )
+    AND (kind = 'public' OR public.chat_is_member(id))
   )
   WITH CHECK (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id));
 
@@ -154,19 +158,46 @@ CREATE POLICY chat_channels_delete ON public.chat_channels
   FOR DELETE TO authenticated
   USING (
     (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id))
+    AND (kind = 'public' OR public.chat_is_member(id))
+  );
+
+CREATE POLICY chat_members_read ON public.chat_members
+  FOR SELECT TO authenticated
+  USING (
+    (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id))
     AND (
-      kind = 'public'
+      user_id = auth.uid()
       OR EXISTS (
-        SELECT 1 FROM public.chat_members cm
-        WHERE cm.channel_id = id AND cm.user_id = auth.uid()
+        SELECT 1 FROM public.chat_channels c
+        WHERE c.id = channel_id
+          AND (
+            c.kind = 'public'
+            OR c.created_by = auth.uid()
+            OR public.chat_is_member(c.id)
+          )
       )
     )
   );
 
-CREATE POLICY chat_members_member_all ON public.chat_members
-  FOR ALL TO authenticated
-  USING (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id))
-  WITH CHECK (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id));
+CREATE POLICY chat_members_insert ON public.chat_members
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id))
+    AND EXISTS (
+      SELECT 1 FROM public.chat_channels c
+      WHERE c.id = channel_id
+        AND (c.kind = 'public' OR c.created_by = auth.uid())
+    )
+  );
+
+CREATE POLICY chat_members_update ON public.chat_members
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid() AND (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id)))
+  WITH CHECK (user_id = auth.uid() AND (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id)));
+
+CREATE POLICY chat_members_delete ON public.chat_members
+  FOR DELETE TO authenticated
+  USING (user_id = auth.uid() AND (public.is_workspace_member(workspace_id) OR public.owns_workspace(workspace_id)));
 
 CREATE POLICY chat_messages_member_all ON public.chat_messages
   FOR ALL TO authenticated
