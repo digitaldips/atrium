@@ -7,6 +7,7 @@ import { D, S, me } from '../core/store.js';
 import { av, pIcon } from '../ui/helpers.js';
 import { permsTable, teamsGrid } from './members.js';
 import { page404 } from './errors.js';
+import { agenticSettingsBody } from './agentic.js';
 import { SHORTCUTS } from '../overlays/modals.js';
 import { googleReturnBanner, scopeShortNames } from '../../supabase/functions/_shared/google-pure.js';
 import { googleStatus, loadGoogleStatus, ensureCalendarList } from '../core/google.js';
@@ -22,7 +23,13 @@ export const SET_NAV = [
       ['datetime', 'Date & time', 'clock'],
     ],
   ],
-  ['Integrations', [['integrations', 'Integrations', 'plug']]],
+  [
+    'Integrations',
+    [
+      ['integrations', 'Integrations', 'plug'],
+      ['agentic', 'Agentic', 'bot'],
+    ],
+  ],
   [
     'Workspace',
     [
@@ -94,6 +101,8 @@ export function settingsBody(sec, title) {
   switch (sec) {
     case 'integrations':
       return googleIntegrationsBody(H);
+    case 'agentic':
+      return agenticSettingsBody(H);
     case 'workspace':
       return (
         H('Your workspace name, address, and identity.') +

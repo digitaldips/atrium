@@ -43,6 +43,7 @@ export const ROUTE_NAMES = {
   org: 'Organisation',
   activity: 'Activity',
   settings: 'Settings',
+  'agentic-auth': 'Agentic authorization',
   system: 'Design system',
   states: 'System states',
   archive: 'Archive',

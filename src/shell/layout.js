@@ -30,6 +30,7 @@ import { pageProject } from '../pages/project.js';
 import { pageWsCalendar } from '../views/calendar.js';
 import { pageWsTimeline } from '../views/timeline.js';
 import { pageSettings } from '../pages/settings.js';
+import { pageAgenticAuth } from '../pages/agentic.js';
 import { pageStates, pageSystem } from '../pages/design-system.js';
 import { pageArchive } from '../features/archive.js';
 
@@ -77,6 +78,7 @@ export function renderPage() {
       team: pageTeam,
       activity: pageActivity,
       settings: pageSettings,
+      'agentic-auth': pageAgenticAuth,
       system: pageSystem,
       states: pageStates,
       archive: pageArchive,

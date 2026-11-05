@@ -51,6 +51,7 @@ import './actions/actions.js';
 import './actions/crm.js';
 import './actions/events.js';
 import './actions/google.js';
+import './actions/agentic.js';
 import './actions/linkage.js';
 import './actions/notes.js';
 import './actions/mail.js';
@@ -104,6 +105,12 @@ async function init() {
       return;
     }
     S.ui.route = routeHash || S.prefs.home || 'home';
+    /* The MCP consent round-trip lands as #agentic-auth?req=<id>: the request
+       id rides the route params for the consent screen. */
+    if (routeHash === 'agentic-auth' && hashQuery?.get('req')) {
+      S.ui.route = 'agentic-auth';
+      S.ui.params = { req: hashQuery.get('req') };
+    }
     /* A consent result lands on the Integrations section so its banner is seen. */
     if (googleReturn) S.ui.settings = 'integrations';
     /* Google connection state: fetched once per session at boot, and again
