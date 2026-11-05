@@ -648,6 +648,10 @@ async function revokeGrant(req) {
     return oerr(req, 'invalid_request');
   }
   if (!b?.grant_id) return oerr(req, 'invalid_request');
+  /* Malformed ids would make PostgREST's uuid filter throw — treat as not-revoked. */
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(b.grant_id))) {
+    return jres(req, { revoked: false });
+  }
   const out = await srPatch(`oauth_grants?id=eq.${encodeURIComponent(String(b.grant_id))}&user_id=eq.${user.id}&revoked_at=is.null`, {
     revoked_at: iso(nowMs()),
   });
