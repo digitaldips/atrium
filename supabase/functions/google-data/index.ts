@@ -88,7 +88,9 @@ function safeId(s: string): string {
 }
 
 function authedGet(url: string, accessToken: string): Promise<Response> {
-  return fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  /* 12s cap: a hanging Google call must fail HONESTLY (retryable error) —
+     an untimed fetch runs into the isolate wall-clock and dies mid-request. */
+  return fetch(url, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(12_000) });
 }
 
 /* metadata batch: From/Subject headers + snippet, internalDate, labelIds
@@ -96,11 +98,14 @@ function authedGet(url: string, accessToken: string): Promise<Response> {
 async function fetchGmailBatch(accessToken: string, ids: string[]): Promise<unknown[]> {
   const metas = await Promise.all(
     ids.map(id =>
-      authedGet(`${GMAIL_API}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`, accessToken).then(r =>
-        r.ok ? r.json() : null,
-      ),
+      authedGet(`${GMAIL_API}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`, accessToken)
+        .then(r => (r.ok ? r.json() : null))
+        .catch(() => null),
     ),
   );
+  /* An empty result must be TRUE: every metadata fetch failing (rate limit,
+     quota, outage) must error honestly, not read as an empty inbox. */
+  if (ids.length && metas.every(m => !m)) throw new Error('gmail_batch_failed');
   return metas.map(meta => mapGmailMessage(meta)).filter(Boolean);
 }
 
@@ -271,9 +276,15 @@ Deno.serve(async (req: Request) => {
         /* label=<labelId> filters server-side (STARRED, a user label, …).
            Unfiltered → the INBOX list, exactly as before. */
         const labelFilter = safeId(p.get('label') || '');
+        const t0 = Date.now();
         const { res, ids } = await listGmail(auth.accessToken, new URLSearchParams({ labelIds: labelFilter || 'INBOX', maxResults: String(max) }));
-        if (res) return googleError(req, res);
-        return json(req, { connected: true, messages: await fetchGmailBatch(auth.accessToken, ids), label: labelFilter });
+        if (res) {
+          console.error(`[gmail] list failed status=${res.status} ms=${Date.now() - t0}`);
+          return googleError(req, res);
+        }
+        const messages = await fetchGmailBatch(auth.accessToken, ids);
+        console.error(`[gmail] list ok ids=${ids.length} batch_ok=${messages.length} ms=${Date.now() - t0} label='${labelFilter}'`);
+        return json(req, { connected: true, messages, label: labelFilter });
       }
 
       /* ---------- one message, full ---------- */
