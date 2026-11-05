@@ -75,7 +75,7 @@ export function renderOnboarding() {
       .map(t => opt('tmpl', t.id, t.icon, t.name, t.tasks.length + ' starter tasks'))
       .join('')}</div>${nav()}`;
   if (st === 4)
-    body = `<h1>Invite your team</h1><p class="sub">Atrium works best with your teammates. They'll get an email invite.</p><div class="col" style="gap:8px">${[0, 1, 2].map(i => `<input class="input input-lg" id="o-inv-${i}" placeholder="teammate@company.com" type="email" value="${esc((o.invites || '').split(',')[i] || '')}" data-in="onbInv" data-i="${i}" aria-label="Teammate email ${i + 1}">`).join('')}</div><button class="btn btn-ghost btn-sm" style="align-self:flex-start" data-a="copyInviteLink">${ic('link', 13)}Copy invite link instead</button>${nav('Send invites', true)}`;
+    body = `<h1>Invite your team</h1><p class="sub">Atrium works best with your teammates. Add them any time from Members.</p><div class="col" style="gap:8px">${[0, 1, 2].map(i => `<input class="input input-lg" id="o-inv-${i}" placeholder="teammate@company.com" type="email" value="${esc((o.invites || '').split(',')[i] || '')}" data-in="onbInv" data-i="${i}" aria-label="Teammate email ${i + 1}">`).join('')}</div>${nav('Send invites', true)}`;
   if (st === 5) {
     const n = (o.invites || '').split(',').filter(x => x.includes('@')).length;
     body = `<div style="display:flex;justify-content:center"><span class="ftype ready-badge" style="--c:var(--green);width:48px;height:48px;border-radius:12px">${ic('circle-check', 22)}</span></div><h1>Your workspace is ready</h1><p class="sub">Here's what we set up for you.</p>

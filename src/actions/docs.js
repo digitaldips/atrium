@@ -17,7 +17,7 @@
    ensure* on every render, so an ungated fetch would loop forever. */
 import { $, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { S } from '../core/store.js';
+import { S, viewerName } from '../core/store.js';
 import { DOC_UNTITLED, docTextFromHtml, makeDocPage, nextDocPosition, shouldFetchState, shouldSnapshot } from '../core/docs.js';
 import { MAX_IMPORT_BYTES, granolaImportPlan, parseGranolaExport } from '../core/granola.js';
 import { docsSanitize } from '../core/sanitize.js';
@@ -331,7 +331,7 @@ export function syncDocChannel(id) {
       applyRemoteEdit(id, p);
     })
     .subscribe(status => {
-      if (status === 'SUBSCRIBED' && chan) chan.track({ name: S.prefs.name || 'You' });
+      if (status === 'SUBSCRIBED' && chan) chan.track({ name: viewerName() });
     });
 }
 

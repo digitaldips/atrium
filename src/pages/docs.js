@@ -11,7 +11,7 @@
    ===================================================================== */
 import { ago, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { S } from '../core/store.js';
+import { S, memberByAuth, viewerName } from '../core/store.js';
 import { DOC_UNTITLED, buildDocTree, descendantIds, docSnippet, docTextFromHtml } from '../core/docs.js';
 import { docsSanitize } from '../core/sanitize.js';
 import { DC, ensureDocSel, ensureDocsRows, ensureDocsTrash, ensureGranolaStatus, getCurrentUserId } from '../actions/docs.js';
@@ -237,7 +237,7 @@ function versionsPanel(p, rows) {
     body = rows
       .map(v => {
         const open = DC.preview === v.id;
-        const author = v.created_by === getCurrentUserId() ? esc(S.prefs.name || 'You') : 'Member';
+        const author = v.created_by === getCurrentUserId() ? esc(memberByAuth(v.created_by)?.name || viewerName()) : 'Member';
         return `<div class="note-att" style="align-items:flex-start">
         <span class="lblbadge sys" style="flex-shrink:0">${ic('history', 11)}${KIND_LABEL[v.kind] || v.kind}</span>
         <div class="grow" style="min-width:0">

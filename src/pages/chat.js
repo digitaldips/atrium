@@ -14,7 +14,7 @@
    ===================================================================== */
 import { ago, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { S, D } from '../core/store.js';
+import { S, D, memberByAuth, viewerName } from '../core/store.js';
 import { docSnippet } from '../core/docs.js';
 import { fsize, empty } from '../ui/helpers.js';
 import { groupChatThreads } from '../core/chat.js';
@@ -45,7 +45,9 @@ function ensureChatUi() {
 /* Author display: the caller's own name for their own rows; other users
    have no readable profile directory, so they render honestly as 'Member'. */
 function authorName(uid) {
-  if (!uid || uid === myId()) return S.prefs.name || 'You';
+  const m = memberByAuth(uid);
+  if (m) return m.name || 'Member';
+  if (!uid || uid === myId()) return viewerName();
   return 'Member';
 }
 

@@ -341,6 +341,10 @@ export async function startWorkspace(session) {
 export const D = () => S.data;
 export const me = () => D().members.find(m => m.id === D().me);
 export const mem = id => D().members.find(m => m.id === id);
+/* T6 identity bridge: chat/messages carry auth uuids; doc members carry
+   m-ids with authUserId. One lookup for every viewer-name surface. */
+export const memberByAuth = uid => (uid ? D().members.find(m => m.authUserId === uid) : null);
+export const viewerName = () => me()?.name || S.prefs.name || 'You';
 export const proj = id => D().projects.find(p => p.id === id);
 export const task = id => D().tasks.find(t => t.id === id);
 export const pColor = p => PCOLORS[p?.color] || PCOLORS.slate;

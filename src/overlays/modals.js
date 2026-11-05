@@ -246,7 +246,7 @@ export function inviteModal(m, H) {
   const err = S.ui.errors.invite;
   return `${H('Add member to ' + esc(D().ws.name), 'Existing accounts join immediately; others are added as pending and promoted when they first sign in.')}
   <form class="modal-b" data-submit="submitInvite">
-    <div class="field"><label class="label" for="inv-emails">Email addresses</label><textarea class="textarea ${err ? 'is-error' : ''}" id="inv-emails" placeholder="name@operanceai.com, another@operanceai.com" rows="3" autofocus>${esc(S.ui.inviteDraft || '')}</textarea>${err ? `<span class="err">${ic('circle-alert', 12)}${err}</span>` : '<span class="hint">Separate multiple addresses with commas.</span>'}</div>
+    <div class="field"><label class="label" for="inv-emails">Email addresses</label><textarea class="textarea ${err ? 'is-error' : ''}" id="inv-emails" placeholder="name@operanceai.com, another@operanceai.com" rows="3" autofocus>${esc(S.ui.inviteDraft || '')}</textarea>${err ? `<span class="err">${ic('circle-alert', 12)}${esc(err)}</span>` : '<span class="hint">Separate multiple addresses with commas.</span>'}</div>
     <div class="field"><label class="label" for="inv-team">Team</label><select class="select" id="inv-team"><option value="">No team</option>${teamsList()
       .map(t => `<option value="${t.id}">${t.name}</option>`)
       .join('')}</select></div>
