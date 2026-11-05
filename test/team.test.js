@@ -232,7 +232,7 @@ function fakeUpdateClient({ updateErr = null, rpcId = null, insertErr = null, up
         select() {
           calls.probes.push(1);
           return {
-            eq(key, val) {
+            eq() {
               return { maybeSingle: async () => ({ data: probeRow, error: null }) };
             },
           };

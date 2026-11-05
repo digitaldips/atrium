@@ -96,7 +96,11 @@ test('needsBootstrap is true ONLY for effectively empty rows (S4: never seed ove
   assert.equal(needsBootstrap({ data: {} }), true);
   assert.equal(needsBootstrap({ data: { data: null } }), true);
   assert.equal(needsBootstrap({ data: { data: {} } }), true, 'an empty inner doc is still bootstrapable');
-  assert.equal(needsBootstrap({ data: { data: { prefs: { theme: 'dark' } } } }), false, 'a doc with ANY content must not be annihilated by a seed re-bootstrap');
+  assert.equal(
+    needsBootstrap({ data: { data: { prefs: { theme: 'dark' } } } }),
+    false,
+    'a doc with ANY content must not be annihilated by a seed re-bootstrap',
+  );
   assert.equal(needsBootstrap({ data: { data: { tasks: [] } } }), false);
   assert.equal(needsBootstrap({ data: { data: { tasks: [{ id: 't1' }] } } }), false);
 });
