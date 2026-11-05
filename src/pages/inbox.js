@@ -4,6 +4,8 @@ import { ic } from '../core/icons.js';
 import { D, S, client, commentsOf, crmClients, crmLinks, mem, pColor, proj, task } from '../core/store.js';
 import { findLink, goneMailPreview, mailSuggestion } from '../core/links.js';
 import { googleStatus, ensureGmail, ensureGmailLabels, ensureGmailDrafts } from '../core/google.js';
+import { mailUnreadCount } from '../core/mail.js';
+import { mailHeaderChip, mailPane, mailPreviewPane, mailSelOpen } from './mail.js';
 import { mergeInbox, safeLink, bulkSelectionWarning } from '../../supabase/functions/_shared/google-pure.js';
 import { av, empty, fmtComment, fsize } from '../ui/helpers.js';
 import { sanitizeMailHtml } from '../core/sanitize.js';
@@ -18,9 +20,11 @@ export function pageInbox() {
     ['comment', 'Comments'],
     ['update', 'Updates'],
     ['gmail', 'Gmail'],
+    ['mail', 'Mail'],
   ];
   const cat = S.ui.inboxCat;
   const gcat = cat === 'gmail';
+  const mcat = cat === 'mail';
   const g = googleStatus();
   if ((gcat || cat === 'all') && g.connected) {
     ensureGmail(); // fetch-on-render; no-op once cached
@@ -33,7 +37,12 @@ export function pageInbox() {
     .notifs.slice()
     .sort((a, b) => b.at - a.at);
   const gmsgs = S.ui.gmsgs || [];
-  const count = k => (k === 'gmail' ? gmsgs.filter(m => m.unread).length : notifs.filter(n => (k === 'all' || n.type === k) && !n.read).length);
+  const count = k =>
+    k === 'gmail'
+      ? gmsgs.filter(m => m.unread).length
+      : k === 'mail'
+        ? mailUnreadCount(D().mail?.threads)
+        : notifs.filter(n => (k === 'all' || n.type === k) && !n.read).length;
   /* One merged, time-sorted stream for every non-gmail category (pure
      mergeInbox — the tested kind tags + filter semantics); the gmail
      category keeps its dedicated list below. */
@@ -49,24 +58,26 @@ export function pageInbox() {
     ((S.ui.gmsg || {})[S.ui.gsel] && S.ui.gmsg[S.ui.gsel].state === 'error' ? goneMailPreview(S.ui.gsel, D().links) : null);
   return `<div class="page flush">
     <div style="display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr);flex:1;min-height:0" class="inbox-grid">
-      <style>@media(max-width:900px){.inbox-grid{grid-template-columns:minmax(0,1fr)!important}.inbox-prev{display:${sel || gsel ? 'flex' : 'none'}!important;position:fixed;inset:0;z-index:48;background:var(--surface)}}</style>
+      <style>@media(max-width:900px){.inbox-grid{grid-template-columns:minmax(0,1fr)!important}.inbox-prev{display:${sel || gsel || (mcat && mailSelOpen()) ? 'flex' : 'none'}!important;position:fixed;inset:0;z-index:48;background:var(--surface)}}</style>
       <div style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0">
         <div style="padding:18px var(--gutter) 0" class="row"><h1 style="font-size:var(--fs-xl);margin:0;font-weight:600;letter-spacing:-.015em">Inbox</h1><span class="sp"></span>
           ${
-            gcat
-              ? `<span class="row" style="gap:6px;font-size:12px;color:var(--text-2)">${ic('mail', 14)}${g.connected ? `Google · ${esc(g.email || 'connected')}` : 'Not connected'}</span>${
-                  g.connected ? ` <button class="btn btn-secondary btn-sm" data-a="gCompose">${ic('pencil', 13)}Compose</button>` : ''
-                }`
-              : `<label class="row" style="font-size:12px;color:var(--text-2);gap:6px;cursor:pointer"><input type="checkbox" class="toggle" data-a="toggleUnreadOnly" ${S.ui.inboxUnread ? 'checked' : ''}>Unread</label>
+            mcat
+              ? mailHeaderChip()
+              : gcat
+                ? `<span class="row" style="gap:6px;font-size:12px;color:var(--text-2)">${ic('mail', 14)}${g.connected ? `Google · ${esc(g.email || 'connected')}` : 'Not connected'}</span>${
+                    g.connected ? ` <button class="btn btn-secondary btn-sm" data-a="gCompose">${ic('pencil', 13)}Compose</button>` : ''
+                  }`
+                : `<label class="row" style="font-size:12px;color:var(--text-2);gap:6px;cursor:pointer"><input type="checkbox" class="toggle" data-a="toggleUnreadOnly" ${S.ui.inboxUnread ? 'checked' : ''}>Unread</label>
           <button class="ibtn ibtn-sm" data-a="markAllRead" data-tip="Mark all as read" aria-label="Mark all as read">${ic('check-check', 15)}</button>`
           }</div>
         <div class="tabs inbox-tabs" role="tablist">${cats.map(([k, n]) => `<button role="tab" class="tab ${cat === k ? 'on' : ''}" data-a="set" data-k="inboxCat" data-v="${k}">${n}${count(k) ? `<span class="cnt">${count(k)}</span>` : ''}</button>`).join('')}</div>
         ${gcat && g.connected ? gmailChips() : ''}
         ${gcat && g.connected ? gmailBulkBar() : ''}
         ${gcat && g.connected ? gmailSearchBar() : ''}
-        <div class="inbox-list" data-keep="inbox-list">${gcat ? gmailList(g, gmsgs) : mergedList(rows, sel)}</div>
+        ${mcat ? mailPane() : `<div class="inbox-list" data-keep="inbox-list">${gcat ? gmailList(g, gmsgs) : mergedList(rows, sel)}</div>`}
       </div>
-      <div class="inbox-prev" style="display:flex;flex-direction:column;min-height:0;overflow-y:auto">${gsel ? gmailPreview(gsel) : gcat ? `<div class="fullstate"><div class="box"><div class="empty-state" style="padding:0"><div class="glyph">${ic('mail', 20)}</div><h2 class="es-h">Select a message</h2><p>Recent Gmail messages open here as a read-only preview.</p></div></div></div>` : sel ? inboxPreview(sel) : `<div class="fullstate"><div class="box"><div class="empty-state" style="padding:0"><div class="glyph">${ic('mail-open', 20)}</div><h2 class="es-h">Select a notification</h2><p>Read the conversation and reply without leaving your inbox.</p></div></div></div>`}</div>
+      <div class="inbox-prev" style="display:flex;flex-direction:column;min-height:0;overflow-y:auto">${mcat ? mailPreviewPane() : gsel ? gmailPreview(gsel) : gcat ? `<div class="fullstate"><div class="box"><div class="empty-state" style="padding:0"><div class="glyph">${ic('mail', 20)}</div><h2 class="es-h">Select a message</h2><p>Recent Gmail messages open here as a read-only preview.</p></div></div></div>` : sel ? inboxPreview(sel) : `<div class="fullstate"><div class="box"><div class="empty-state" style="padding:0"><div class="glyph">${ic('mail-open', 20)}</div><h2 class="es-h">Select a notification</h2><p>Read the conversation and reply without leaving your inbox.</p></div></div></div>`}</div>
     </div>
   </div>`;
 }

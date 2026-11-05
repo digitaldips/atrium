@@ -269,6 +269,13 @@ export function folderUnreadCount(threads, folderId) {
   return threadsInFolder(threads, folderId).filter(t => t.unread).length;
 }
 
+/* ---------- T5 inbox-mail merge: the sidebar/tab badge count. Unread
+   threads everywhere EXCEPT trash (trashed mail is not pending reading).
+   Pure + null-safe: a doc without mail contributes zero. ---------- */
+export function mailUnreadCount(threads) {
+  return (Array.isArray(threads) ? threads : []).filter(t => t && t.unread && t.folderId !== 'f_trash').length;
+}
+
 /* ---------- AC4: search — literal case-insensitive match on subject,
    snippet and every message body (no wildcards) ---------- */
 export function mailSearchFilter(threads, q) {

@@ -4,6 +4,7 @@ import { ic, wsLogo } from '../core/icons.js';
 import { PSTAT } from '../core/constants.js';
 import { D, S, allTasks, mem, org, pColor, proj, team, teamsList, visibleProjects } from '../core/store.js';
 import { av } from '../ui/helpers.js';
+import { mailUnreadCount } from '../core/mail.js';
 import { ROUTE_NAMES } from './render.js';
 import { skeleton } from './skeletons.js';
 import { pageHome } from '../pages/home.js';
@@ -24,7 +25,6 @@ import { pageSearch } from '../pages/search.js';
 import { pageNotes } from '../pages/notes.js';
 import { pageDocs } from '../pages/docs.js';
 import { pageChat } from '../pages/chat.js';
-import { pageMail } from '../pages/mail.js';
 import { page404, stateFailed } from '../pages/errors.js';
 import { pageProject } from '../pages/project.js';
 import { pageWsCalendar } from '../views/calendar.js';
@@ -60,7 +60,6 @@ export function renderPage() {
       notes: pageNotes,
       docs: pageDocs,
       chat: pageChat,
-      mail: pageMail,
       overview: pageOverview,
       projects: pageProjects,
       project: pageProject,
@@ -97,9 +96,9 @@ export function sItem(route, label, icon, opt = {}) {
 export function renderSidebar() {
   const u = S.ui,
     d = D();
-  const unreadInbox = d.notifs.filter(n => !n.read && n.type !== 'update').length;
+  /* T5: shared mail merged into the Inbox — the badge counts notifs + mail. */
+  const unreadInbox = d.notifs.filter(n => !n.read && n.type !== 'update').length + mailUnreadCount(d.mail?.threads);
   const unreadAll = d.notifs.filter(n => !n.read).length;
-  const unreadMail = (d.mail?.threads || []).filter(t => t.unread && t.folderId !== 'f_trash').length;
   const myOpen = allTasks().filter(t => t.assignee === d.me && t.status !== 'done' && t.due && diffD(parse(t.due), TODAY) <= 0).length;
   const projs = visibleProjects().filter(p => p.status !== 'complete');
   const inProj = u.route === 'project' ? u.params.id : null;
@@ -129,7 +128,6 @@ export function renderSidebar() {
         ${sItem('tasks', 'Tasks', 'list-checks')}
         ${sItem('docs', 'Docs', 'file-text')}
         ${sItem('chat', 'Chat', 'message-square')}
-        ${sItem('mail', 'Mail', 'mail', { ct: unreadMail || '' })}
         ${sItem('calendar', 'Calendar', 'calendar')}
         ${sItem('timeline', 'Timeline', 'chart-gantt')}
         ${sItem('members', 'Members', 'users')}

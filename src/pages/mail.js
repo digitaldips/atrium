@@ -1,11 +1,7 @@
-/* ---------- MAIL (shared mock mail client — Orbit integration T3) ---------- */
-/* Data lives in the workspace document (doc.mail {folders, threads} —
-   shared workspace state, ensured zero-loss on all three ingest paths in
-   store.js). Layout + row/preview patterns mirror src/pages/inbox.js:
-   two-pane grid minmax(0,420px)|1fr, unread dots, star buttons, row
-   hover/selected states, preview header (back + folder label + actions),
-   message cards (open/collapsed), empty(), ago(). Search filters
-   subject/snippet/body across the workspace's threads. */
+/* ---------- MAIL (merged into the Inbox as its Mail tab — T5) ----------
+   The standalone route is retired; pages/inbox.js renders these panes
+   under the Inbox's Mail tab. State stays S.ui.mailFolder/mailSel/mailQ,
+   and the pane renderers are byte-equivalent with the old standalone page. */
 import { ago, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { D, S, client, crmClients, crmLinks } from '../core/store.js';
@@ -22,7 +18,8 @@ const FOLDER_EMPTY = {
   f_trash: ['trash', 'Trash is empty', 'Trashed threads rest here until you restore or delete them.'],
 };
 
-export function pageMail() {
+/* Shared state for the tab renderers (the old pageMail head). */
+function mailState() {
   if (!D().mail) ensureMailData(D()); // ingest paths own this; belt-and-braces for docs that predate the wiring
   const mail = D().mail;
   const folderId = S.ui.mailFolder || 'f_inbox';
@@ -30,19 +27,34 @@ export function pageMail() {
   const sel = mail.threads.find(t => t && t.id === S.ui.mailSel) || null;
   const q = (S.ui.mailQ || '').trim();
   const list = q ? mailSearchFilter(mail.threads, q) : threadsInFolder(mail.threads, folder.id);
-  return `<div class="page flush">
-    <div style="display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr);flex:1;min-height:0" class="inbox-grid">
-      <style>@media(max-width:900px){.inbox-grid{grid-template-columns:minmax(0,1fr)!important}.inbox-prev{display:${sel ? 'flex' : 'none'}!important;position:fixed;inset:0;z-index:48;background:var(--surface)}}</style>
-      <div style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0">
-        <div style="padding:18px var(--gutter) 0" class="row"><h1 style="font-size:var(--fs-xl);margin:0;font-weight:600;letter-spacing:-.015em">Mail</h1><span class="sp"></span>
-          <button class="btn btn-secondary btn-sm" data-a="mCompose">${ic('pencil', 13)}Compose</button></div>
-        ${folderRail(mail, folder)}
+  return { mail, folder, sel, q, list };
+}
+
+/* Header-row chip + Compose for the Inbox's h1 row (Mail tab active). */
+export function mailHeaderChip() {
+  return `<span class="row" style="gap:6px;font-size:12px;color:var(--text-2)">${ic('mail', 14)}Shared mailbox</span><button class="btn btn-secondary btn-sm" data-a="mCompose">${ic('pencil', 13)}Compose</button>`;
+}
+
+/* Left-pane content below the tabs: folder rail + search + thread list. */
+export function mailPane() {
+  const { mail, folder, q, list } = mailState();
+  return `${folderRail(mail, folder)}
         ${mailSearchBar(q)}
-        <div class="inbox-list" data-keep="mail-list">${mailList(mail, list, q, folder)}</div>
-      </div>
-      <div class="inbox-prev" style="display:flex;flex-direction:column;min-height:0;overflow-y:auto">${sel ? mailPreview(mail, sel, folder) : `<div class="fullstate"><div class="box"><div class="empty-state" style="padding:0"><div class="glyph">${ic('mail-open', 20)}</div><h2 class="es-h">Select a thread</h2><p>Shared workspace mail opens here — everyone in this workspace sees the same mailbox.</p></div></div></div>`}</div>
-    </div>
-  </div>`;
+        <div class="inbox-list" data-keep="mail-list">${mailList(mail, list, q, folder)}</div>`;
+}
+
+/* Preview pane: the selected thread, or the tab's empty state. */
+export function mailPreviewPane() {
+  const { mail, folder, sel } = mailState();
+  return sel
+    ? mailPreview(mail, sel, folder)
+    : `<div class="fullstate"><div class="box"><div class="empty-state" style="padding:0"><div class="glyph">${ic('mail-open', 20)}</div><h2 class="es-h">Select a thread</h2><p>Shared workspace mail opens here — everyone in this workspace sees the same mailbox.</p></div></div></div>`;
+}
+
+/* Whether a mail thread is selected (drives the mobile overlay). */
+export function mailSelOpen() {
+  const { sel } = mailState();
+  return !!sel;
 }
 
 /* ---------- folder rail (unread counts; Starred is virtual) ---------- */

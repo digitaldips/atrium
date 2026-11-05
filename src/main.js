@@ -94,9 +94,13 @@ async function init() {
   const googleReturn = hashQuery?.get('google');
   if (googleReturn) S.ui.googleReturn = { google: googleReturn, reason: hashQuery.get('reason') || '' };
   const authRoutes = ['login', 'onboarding'];
+  /* T5: the standalone mail route merged into Inbox — a #/mail bookmark
+     lands on the Inbox with its Mail tab active. */
+  const mailRedirect = hashRoute === 'mail';
+  if (mailRedirect) S.ui.inboxCat = 'mail';
   const session = supabaseConfigured ? (await sb.auth.getSession()).data?.session : null;
   if (isAuthedSession(session)) {
-    const routeHash = hashRoute && ROUTE_NAMES[hashRoute] ? hashRoute : null;
+    const routeHash = hashRoute && (ROUTE_NAMES[hashRoute] || mailRedirect) ? (ROUTE_NAMES[hashRoute] ? hashRoute : 'inbox') : null;
     if ((await startWorkspace(session)) === 'login') {
       /* Fail closed: server unreachable and no trusted cache of our own. */
       S.ui.auth = 'login';

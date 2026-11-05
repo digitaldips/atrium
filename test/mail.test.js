@@ -20,6 +20,7 @@ import {
   makeMailThread,
   mailThreadContact,
   removeMailThread,
+  mailUnreadCount,
 } from '../src/core/mail.js';
 
 const NOW = 1730000000000;
@@ -343,4 +344,14 @@ test('mailThreadContact skips threads whose last sender is me or empty', () => {
   const none = th('c', 'f_inbox');
   assert.equal(mailThreadContact(none), null);
   assert.equal(mailThreadContact(null), null);
+});
+
+/* ---------- T5 inbox-mail merge: one merged badge count ---------- */
+
+test('mailUnreadCount counts unread non-trashed threads only', () => {
+  const mk = (id, folderId, unread) => ({ id, folderId, unread, messages: [{ id: id + 'm', from: me, to: [], body: '', createdAt: NOW }] });
+  const threads = [mk('a', 'f_inbox', true), mk('b', 'f_inbox', false), mk('c', 'f_trash', true), mk('d', 'f_custom1', true)];
+  assert.equal(mailUnreadCount(threads), 2, 'trash unread does not count');
+  assert.equal(mailUnreadCount([]), 0);
+  assert.equal(mailUnreadCount(null), 0, 'missing mail is zero, not a crash');
 });
