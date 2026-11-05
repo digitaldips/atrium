@@ -15,14 +15,17 @@ import {
   cachePayloadForUser,
   isAuthedSession,
   isTrustedCache,
+  loadMemberWorkspace,
   loadWorkspaceDoc,
   makeDebouncedSync,
   markSyncFailure,
   needsBootstrap,
+  promotePendingMembers,
   pushDocUpdate,
   upsertWorkspaceDoc,
   workspaceRowToDoc,
 } from './workspace-api.js';
+import { findMemberByAuth, pickWorkspaceTarget } from './team.js';
 
 export const STORE_KEY = 'atrium.v1';
 export const DEFAULT_PREFS = {
@@ -139,7 +142,19 @@ export function save() {
     try {
       localStorage.setItem(
         STORE_KEY,
-        JSON.stringify(cachePayloadForUser(getCurrentUser(), { data: S.data, prefs: S.prefs, views: S.views, collapsed: S.ui.collapsed })),
+        JSON.stringify(
+          cachePayloadForUser(getCurrentUser(), {
+            data: S.data,
+            prefs: S.prefs,
+            views: S.views,
+            collapsed: S.ui.collapsed,
+            /* Membership context rides in the cache so an offline boot of a
+               member reconstructs the update-by-id sync target (the shared
+               workspace), never the owner-keyed upsert onto their orphan. */
+            wsId: S.ui.wsId || null,
+            ownerMe: S.ui.memberCtx?.ownerMe || null,
+          }),
+        ),
       );
     } catch {
       /* storage full or blocked: keep working in memory */
@@ -161,11 +176,19 @@ export function bindCacheToUser(userId) {
     ensureOrgsData(S.data); // orgs[] (Organisations) — zero-loss, same contract
     ensureMailData(S.data); // doc.mail (shared Mail, T3) — zero-loss, same contract
     ensureGooglePrefs(S.prefs);
+    /* Offline member boot: reconstruct the member sync target from the
+       cache (data.me is the viewer overlay, ownerMe the shared doc's me).
+       Online boots re-derive it in hydrateWorkspace anyway. */
+    S.ui.wsId = saved.wsId || null;
+    S.ui.memberCtx =
+      saved.wsId && saved.ownerMe && S.data.me && S.data.me !== saved.ownerMe ? { wsId: saved.wsId, memberId: S.data.me, ownerMe: saved.ownerMe } : null;
     return true;
   }
   S.data = seed();
   S.views = {};
   S.prefs = { ...DEFAULT_PREFS };
+  S.ui.wsId = null;
+  S.ui.memberCtx = null;
   try {
     localStorage.removeItem(STORE_KEY);
   } catch {
@@ -185,18 +208,58 @@ export function flushPendingSync() {
 }
 
 /* ---------- server hydration (session -> workspace doc) ---------- */
-/* Load the owner's workspace document from Postgres. Missing row:
-   bootstrap from seed (with the account's real identity) and upsert
-   immediately. Unreachable server: keep the localStorage cache and flag
-   offline. Returns 'loaded' | 'bootstrapped' | 'offline' | 'local'. */
+/* Resolution order (ADR 0003, T6): (a) a workspace I am a MEMBER of
+   (workspace_members join) — loaded, never bootstrapped; (b) else my
+   owner row; (c) else bootstrap from seed. A member hydrate sets
+   S.data.me to THEIR doc member (matched by authUserId — the viewer
+   overlay; the shared doc's me stays the owner's and the member's sync
+   payload restores it). The member's own orphan bootstrap workspace, if
+   any, is left untouched. applyUserIdentity runs ONLY on the owner
+   bootstrap path — it must never stamp a member's identity over the
+   owner's entry in the shared doc. Missing row: bootstrap (owner path).
+   Unreachable server: keep the localStorage cache and flag offline.
+   Returns 'loaded' | 'bootstrapped' | 'offline' | 'local'. */
 let lastHydrateError = null;
 export const lastSyncError = () => lastHydrateError;
 export async function hydrateWorkspace(session) {
   if (!sb || !isAuthedSession(session)) return 'local';
   setCurrentUser(session.user.id);
   try {
-    const row = await loadWorkspaceDoc(sb, session.user.id);
-    if (needsBootstrap(row)) {
+    /* (a) membership wins — a member of someone else's workspace never
+       bootstraps against the shared doc. */
+    const memberRow = await loadMemberWorkspace(sb, session.user.id);
+    const ownerRow = memberRow ? null : await loadWorkspaceDoc(sb, session.user.id);
+    const target = pickWorkspaceTarget(memberRow, ownerRow);
+    if (target.mode === 'member') {
+      const row = target.row;
+      const doc = workspaceRowToDoc(row);
+      if (!doc || !Array.isArray(doc.data?.members)) {
+        throw new Error('This workspace is not initialized yet — ask the owner to sign in once first.');
+      }
+      const mine = findMemberByAuth(doc.data.members, session.user.id);
+      if (!mine) {
+        throw new Error('Your membership is not fully set up yet — ask the workspace owner to re-add you.');
+      }
+      const ownerMe = doc.data.me;
+      S.ui.wsId = row.id; /* docs/chat target docs_pages/chat_channels by the workspace row's id */
+      S.data = doc.data;
+      S.prefs = Object.assign({}, DEFAULT_PREFS, doc.prefs || {});
+      S.views = doc.views || {};
+      ensureCrmData(S.data);
+      ensureDocShape(S.data);
+      ensureNotes(S.data);
+      ensureOrgsData(S.data);
+      ensureMailData(S.data);
+      ensureGooglePrefs(S.prefs);
+      /* Viewer overlay BEFORE any sync can fire: save() below routes
+         through the member update-by-id path (memberCtx set first). */
+      S.data.me = mine.id;
+      S.ui.memberCtx = { wsId: row.id, memberId: mine.id, ownerMe };
+      save();
+      return 'loaded';
+    }
+    if (target.mode === 'owner' && needsBootstrap(target.row)) {
+      S.ui.memberCtx = null;
       S.data = seed();
       S.views = {};
       S.prefs = { ...DEFAULT_PREFS };
@@ -212,7 +275,9 @@ export async function hydrateWorkspace(session) {
       save();
       return 'bootstrapped';
     }
+    const row = target.row;
     const doc = workspaceRowToDoc(row);
+    S.ui.memberCtx = null; /* owner path: the doc's me IS the viewer */
     S.ui.wsId = row.id; /* the docs module targets docs_pages.workspace_id by the workspace row's id */
     S.data = doc.data;
     S.prefs = Object.assign({}, DEFAULT_PREFS, doc.prefs || {});
@@ -228,6 +293,15 @@ export async function hydrateWorkspace(session) {
     ensureOrgsData(S.data);
     ensureMailData(S.data);
     ensureGooglePrefs(S.prefs);
+    /* Pending invitees (added while not yet on the platform) are promoted
+       by the OWNER's hydrate: re-resolve via the RPC, stamp authUserId,
+       insert the workspace_members row. Best-effort; failing entries stay
+       pending for the next boot. */
+    try {
+      await promotePendingMembers(sb, row.id, D().members, D().me, session.user.id);
+    } catch {
+      /* never block the owner's boot on healing */
+    }
     save();
     return 'loaded';
   } catch (err) {

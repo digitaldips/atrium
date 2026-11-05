@@ -25,7 +25,17 @@ import {
 } from '../core/store.js';
 import { makeLinkRow, upsertLink, descToText } from '../core/links.js';
 import { sb, getCurrentUser, setCurrentUser } from '../core/supabase.js';
-import { buildDocPayload, markSyncFailure, pushDocUpdate, signInWithGoogle, signOutUser, upsertWorkspaceDoc } from '../core/workspace-api.js';
+import {
+  buildDocPayload,
+  errMessage,
+  findAuthUserId,
+  markSyncFailure,
+  pushDocUpdate,
+  signInWithGoogle,
+  signOutUser,
+  upsertWorkspaceDoc,
+} from '../core/workspace-api.js';
+import { makeInviteEntry, splitInviteEmails } from '../core/team.js';
 import { fileType, fsize } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
@@ -1534,21 +1544,28 @@ IN.shareAccess = el => {
   });
 };
 A.invite = () => {
+  /* Member-invites-member is out of scope (T6): only the workspace owner
+     adds people — the member branch also keeps shared-doc membership
+     writes owner-only. */
+  if (S.ui.memberCtx) {
+    S.ui.pop = null;
+    toast('Only the workspace owner can add members.', { kind: 'err' });
+    return;
+  }
   S.ui.inviteDraft = '';
   S.ui.errors = {};
   S.ui.pop = null;
   openModal({ type: 'invite' });
 };
-A.submitInvite = () => {
-  const raw = $('#inv-emails').value;
+A.submitInvite = async () => {
+  const raw = ($('#inv-emails')?.value || '').trim();
+  const team = $('#inv-team')?.value || '';
   S.ui.inviteDraft = raw;
-  const role = $('#inv-role').value;
-  const team = $('#inv-team').value;
   const list = raw
     .split(/[\s,;]+/)
     .map(s => s.trim())
     .filter(Boolean);
-  const bad = list.filter(e => !/^\S+@\S+\.\S+$/.test(e));
+  const bad = list.filter(e => !EMAIL_RE.test(e));
   if (!list.length) {
     S.ui.errors.invite = 'Enter at least one email address';
     render();
@@ -1559,41 +1576,73 @@ A.submitInvite = () => {
     render();
     return;
   }
-  loadingBtn('inv-submit', 600, () => {
-    if (
-      !mutate(() =>
-        list.forEach(e => {
-          if (!D().members.some(m => m.email === e))
-            D().members.push({
-              id: uid('m'),
-              name: e
-                .split('@')[0]
-                .replace(/[._-]+/g, ' ')
-                .replace(/\b\w/g, c => c.toUpperCase()),
-              email: e,
-              role,
-              team,
-              title: role,
-              c: '#6B7280',
-              status: 'invited',
-              last: null,
-              tz: '—',
-            });
-        }),
-      )
-    )
+  const { fresh, dups } = splitInviteEmails(D().members, list);
+  if (!fresh.length) {
+    S.ui.errors.invite = `${dups[0]} is already in this workspace`;
+    render();
+    return;
+  }
+  /* Resolve each address against the platform (owner-gated RPC, 0008).
+     Unresolved addresses become pending members — promoted by the
+     owner's hydrate once the person first signs in. */
+  const targets = [];
+  for (const email of fresh) {
+    let authUserId = null;
+    try {
+      authUserId = await findAuthUserId(sb, email);
+    } catch (err) {
+      toast(`Couldn't check ${esc(email)} — ${errMessage(err)}`, { kind: 'err' });
       return;
+    }
+    targets.push({ email, authUserId });
+  }
+  const pending = targets.filter(t => !t.authUserId);
+  const commit = async () => {
+    const rows = targets.filter(t => t.authUserId).map(t => ({ workspace_id: S.ui.wsId, user_id: t.authUserId }));
+    if (rows.length) {
+      /* Membership rows first: a doc entry without its RLS row would
+         leave the invitee unable to resolve the workspace. A 23505
+         duplicate is tolerated — it heals the partial-invite window. */
+      const ins = await sb.from('workspace_members').insert(rows).select();
+      if (ins.error && ins.error.code !== '23505') {
+        toast(`Couldn't add the member(s) — ${errMessage(ins.error)}`, { kind: 'err' });
+        return;
+      }
+    }
+    const ok = mutate(() => {
+      /* Identity bridge: stamp the owner's own authUserId (chat DMs). */
+      const mine = mem(D().me);
+      if (mine && !mine.authUserId) mine.authUserId = getCurrentUser();
+      targets.forEach(t => {
+        if (!D().members.some(m => m.email.toLowerCase() === t.email.toLowerCase())) {
+          const e = makeInviteEntry({ members: D().members, email: t.email, authUserId: t.authUserId, team });
+          if (e) D().members.push(e);
+        }
+      });
+    });
+    if (!ok) return;
     S.ui.modals.pop();
     S.ui.errors = {};
     render();
-    toast(`${list.length} invitation${list.length > 1 ? 's' : ''} sent`);
-  });
-};
-A.copyInviteLink = () => copy(`https://atrium.app/join/${D().ws.url}-7f3k2`, 'Invite link copied');
-A.resendInvite = el => {
-  S.ui.pop = null;
-  render();
-  toast(`Invite resent to ${mem(el.dataset.id).email}`);
+    const added = targets.length - pending.length;
+    if (added) toast(`${added} member${added > 1 ? 's' : ''} added to ${esc(D().ws.name)}`);
+    if (pending.length)
+      toast(`${pending.length} pending — ${pending.map(t => esc(t.email)).join(', ')} will be added automatically when they first sign in.`, {
+        kind: 'info',
+        ms: 6000,
+      });
+    if (dups.length) toast(`${dups.length} address${dups.length > 1 ? 'es' : ''} already in this workspace — skipped.`, { kind: 'info' });
+  };
+  if (pending.length) {
+    confirmDlg({
+      title: 'Not on the platform yet',
+      body: `${pending.map(t => `<b>${esc(t.email)}</b>`).join(', ')} ${pending.length > 1 ? 'have' : 'has'} never signed in. Add them as pending? They'll become a member automatically the first time they sign in.`,
+      ok: 'Add as pending',
+      run: () => commit(),
+    });
+  } else {
+    await commit();
+  }
 };
 A.viewProfile = el => go('member', { id: el.dataset.id });
 A.assignToMember = el => {
@@ -1603,29 +1652,26 @@ A.assignToMember = el => {
 A.removeMember = el => {
   const m = mem(el.dataset.id);
   S.ui.pop = null;
-  const n = allTasks().filter(t => t.assignee === m.id && t.status !== 'done').length;
-  confirmDlg({
-    title: `Remove ${m.name}?`,
-    body: `${esc(m.name)} will lose access to ${esc(D().ws.name)} immediately.${n ? ` Their <b>${n} open task${n > 1 ? 's' : ''}</b> will become unassigned.` : ''}`,
-    ok: 'Remove member',
-    danger: true,
-    icon: 'user-minus',
-    run: () => {
-      const snap = snapshot();
-      if (
-        mutate(() => {
-          D().members = D().members.filter(x => x !== m);
-          D().tasks.forEach(t => {
-            if (t.assignee === m.id) t.assignee = null;
-          });
-          D().projects.forEach(p => (p.members = p.members.filter(x => x !== m.id)));
-        })
-      ) {
-        if (S.ui.route === 'member') go('members');
-        toast(`Removed ${m.name}`, { action: 'Undo', onAction: () => restore(snap) });
-      }
-    },
-  });
+  /* Member removal is out of scope (T6) — and removing a real member's
+     doc entry would strand their workspace_members RLS row, leaving them
+     with access but no identity. Refuse honestly until removal exists. */
+  toast(`Removing members isn't supported yet — ${esc(m.name)} stays a member.`, { kind: 'info' });
+};
+A.newWorkspace = () => {
+  /* A member runs this against the SHARED doc — onboarding would push a
+     template doc into their orphan row and then sync it over the shared
+     workspace. Workspace creation is owner-only. */
+  if (S.ui.memberCtx) {
+    S.ui.pop = null;
+    toast(`You're a member of ${esc(D().ws.name)} — only the workspace owner can create workspaces.`, { kind: 'err' });
+    return;
+  }
+  S.ui.pop = null;
+  S.ui.auth = 'onboarding';
+  S.ui.onb = 1;
+  S.ui.onbData.ws = '';
+  S.ui.onbData.url = '';
+  render();
 };
 IN.memQ = el => {
   S.ui.memQ = el.value;
@@ -1785,14 +1831,6 @@ A.switchWs = el => {
   go('home');
   toast(`Switched to ${w.name}`);
 };
-A.newWorkspace = () => {
-  S.ui.pop = null;
-  S.ui.auth = 'onboarding';
-  S.ui.onb = 1;
-  S.ui.onbData.ws = '';
-  S.ui.onbData.url = '';
-  render();
-};
 A.signOut = async () => {
   S.ui.pop = null;
   S.ui.palette = null;
@@ -1813,6 +1851,7 @@ A.signOut = async () => {
     /* session already gone server-side: sign out locally anyway */
   }
   setCurrentUser(null);
+  S.ui.memberCtx = null;
   try {
     localStorage.removeItem(STORE_KEY);
   } catch {
@@ -1978,7 +2017,13 @@ A.saveWorkspace = () => {
       toast('Workspace settings saved');
   });
 };
-A.delWorkspace = () =>
+A.delWorkspace = () => {
+  /* Deleting "the workspace" while viewing a shared doc would seed and
+     sync over the shared workspace for everyone. Owner-only. */
+  if (S.ui.memberCtx) {
+    toast(`Only the workspace owner can delete ${esc(D().ws.name)}.`, { kind: 'err' });
+    return;
+  }
   confirmDlg({
     title: `Delete ${D().ws.name}?`,
     body: 'Every project, task, file, and comment in this workspace will be permanently deleted for all members.',
@@ -1986,6 +2031,7 @@ A.delWorkspace = () =>
     danger: true,
     typeName: D().ws.name,
     run: () => {
+      S.ui.memberCtx = null;
       S.data = seed();
       S.views = {};
       save();
@@ -1994,6 +2040,7 @@ A.delWorkspace = () =>
       toast('Workspace deleted. Sign in again to start with a fresh, empty workspace.', { kind: 'info', ms: 5000 });
     },
   });
+};
 A.avColor = el => {
   me().c = el.dataset.v;
   save();

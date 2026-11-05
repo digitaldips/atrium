@@ -20,7 +20,7 @@
    chat path); names sanitize through safeAttachmentName before any
    upload; every rendered untrusted string is esc()'d in the page. */
 import { $ } from '../core/utils.js';
-import { S } from '../core/store.js';
+import { S, D } from '../core/store.js';
 import {
   CHAT_DEFAULT_NAME,
   CHAT_FILE_BUCKET,
@@ -625,13 +625,18 @@ export async function ensureChatPicker() {
     if (!wsId) throw new Error('No workspace found for this account.');
     const me = getCurrentUser();
     /* Real auth ids only: workspace_members I can read (owner sees the
-       workspace's rows) + co-members of my channels. Doc members carry
-       doc-local ids — not auth ids — so they are not candidates. */
+       workspace's rows; a member only their own), the workspace owner
+       (members can read the joined workspace row), and doc members
+       carrying an authUserId (the T6 identity bridge — invitees and the
+       owner are DM-able across the shared doc). */
     const ids = new Set();
     const { data: wm, error: werr } = await sb.from('workspace_members').select('user_id').eq('workspace_id', wsId);
     if (werr) throw werr;
     for (const r of wm || []) if (r.user_id && r.user_id !== me) ids.add(r.user_id);
     for (const c of CC.channels) for (const m of c.members || []) if (m.user_id && m.user_id !== me) ids.add(m.user_id);
+    const { data: ws } = await sb.from('workspaces').select('owner_id').eq('id', wsId).maybeSingle();
+    if (ws?.owner_id && ws.owner_id !== me) ids.add(ws.owner_id);
+    for (const m of D().members || []) if (m.authUserId && m.authUserId !== me) ids.add(m.authUserId);
     CC.picker = { rows: [...ids].sort(), state: 'ok' };
   } catch (e) {
     CC.picker = { rows: [], state: 'error', error: errMessage(e, 'Could not load members.') };

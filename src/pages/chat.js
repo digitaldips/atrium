@@ -14,10 +14,11 @@
    ===================================================================== */
 import { ago, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { S } from '../core/store.js';
+import { S, D } from '../core/store.js';
 import { docSnippet } from '../core/docs.js';
 import { fsize, empty } from '../ui/helpers.js';
 import { groupChatThreads } from '../core/chat.js';
+import { findMemberByAuth } from '../core/team.js';
 import {
   CC,
   dmLabel,
@@ -302,13 +303,14 @@ export function chatNewDmModal(m, H) {
       '<p class="muted" style="font-size:12.5px">No members to message yet. DMs open between workspace members — when someone else is a member of this workspace (or shares a channel with you), they appear here.</p>';
   else
     body = p.rows
-      .map(
-        uid => `<div class="row" style="padding:8px 0;border-bottom:1px solid var(--divider);gap:8px">
-        <span class="av sm" style="--c:var(--accent)">M</span>
-        <span class="trunc grow" style="font-size:13px">Member ···${esc(uid.slice(-4))}</span>
+      .map(uid => {
+        const m = findMemberByAuth(D().members, uid);
+        return `<div class="row" style="padding:8px 0;border-bottom:1px solid var(--divider);gap:8px">
+        <span class="av sm" style="--c:var(--accent)">${esc((m?.name || 'M').slice(0, 1).toUpperCase())}</span>
+        <span class="trunc grow" style="font-size:13px">${esc(m?.name || 'Member')} ···${esc(uid.slice(-4))}</span>
         <button class="btn btn-secondary btn-sm" data-a="chatDmCreateGo" data-uid="${esc(uid)}">Message</button>
-      </div>`,
-      )
+      </div>`;
+      })
       .join('');
   return `${H('New direct message', 'Direct messages are private between the two of you')}
     <div class="modal-b">

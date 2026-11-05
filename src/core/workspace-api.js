@@ -6,6 +6,8 @@
    helpers to the real Supabase project.
    ===================================================================== */
 
+import { pickMemberWorkspace, applyPendingResolution } from './team.js';
+
 /* ---------- document payload ---------- */
 
 /* The Postgres table backing the workspace document. ONE constant, ONE
@@ -156,6 +158,24 @@ export async function loadWorkspaceDoc(client, userId) {
   return data;
 }
 
+/* SELECT the workspace I am a MEMBER of (workspace_members join), most
+   recently updated first, or null. Members have RLS SELECT on their own
+   membership rows (0001) and SELECT on the joined workspace. */
+export async function loadMemberWorkspace(client, userId) {
+  const { data, error } = await client.from('workspace_members').select('workspaces!inner(id, name, data, updated_at)').eq('user_id', userId);
+  if (error) throw new Error(errMessage(error));
+  return pickMemberWorkspace(data);
+}
+
+/* Resolve a platform email to an auth uuid via the owner-gated RPC
+   (migration 0008). Returns the uuid, or null when the email has never
+   signed in (caller decides: pending invite vs honest error). */
+export async function findAuthUserId(client, email) {
+  const { data, error } = await client.rpc('atrium_find_user_id', { email });
+  if (error) throw new Error(errMessage(error));
+  return data || null;
+}
+
 /* UPSERT {data,prefs,views} for this owner. owner_id has a unique index,
    so this inserts on first login and updates afterwards. */
 export async function upsertWorkspaceDoc(client, userId, payload, name) {
@@ -194,21 +214,85 @@ export async function signOutUser(client) {
 
 /* ---------- write-through sync ---------- */
 
-/* One sync step: upsert the current doc triple. Returns 'ok' on success,
-   'failed' on failure, and 'skipped' in local-only mode (no client or no
-   signed-in user, e.g. a debounce that outlived a sign-out) — never
-   throws. Callers must treat 'skipped' as a no-op, NOT as an error: only
+/* Member sync payload: the doc with the owner's `me` restored. The viewer
+   overlay (S.data.me = the member's own doc id) must never reach the
+   shared document — doc.me identifies the OWNER. Two writers are LWW at
+   doc granularity by design (ADR 0003): the last debounced save wins the
+   whole doc; per-surface tables (docs/chat) write Postgres directly. */
+export function buildMemberUpdatePayload(S, ownerMe) {
+  return buildDocPayload({ ...S.data, me: ownerMe }, S.prefs, S.views);
+}
+
+/* MEMBER sync path: update the shared workspace row BY ID. This must
+   never take the owner-keyed upsert — a member upserting by their own
+   owner_id would touch their orphan bootstrap row, never the shared doc
+   (AC3). Uses the member_doc_update policy (migration 0008). */
+export async function updateMemberWorkspaceDoc(client, wsId, S, ownerMe) {
+  const { error } = await client
+    .from(WORKSPACES_TABLE)
+    .update({ data: buildMemberUpdatePayload(S, ownerMe) })
+    .eq('id', wsId);
+  if (error) throw new Error(errMessage(error));
+}
+
+/* One sync step: upsert the current doc triple for an owner, or update
+   the shared workspace by id when the viewer is a member (S.ui.memberCtx
+   is set by hydrate before any sync can fire — a member sync never runs
+   against an unresolved doc). Returns 'ok' on success, 'failed' on
+   failure, and 'skipped' in local-only mode (no client or no signed-in
+   user, e.g. a debounce that outlived a sign-out) — never throws.
+   Callers must treat 'skipped' as a no-op, NOT as an error: only
    'failed' sets the caller's S.ui.offline flag so the UI can say so. */
 export async function pushDocUpdate(client, userId, S, name) {
   if (!client || !userId) return 'skipped';
   try {
-    await upsertWorkspaceDoc(client, userId, buildDocPayload(S.data, S.prefs, S.views), name);
+    const ctx = S.ui && S.ui.memberCtx;
+    if (ctx && ctx.wsId) await updateMemberWorkspaceDoc(client, ctx.wsId, S, ctx.ownerMe);
+    else await upsertWorkspaceDoc(client, userId, buildDocPayload(S.data, S.prefs, S.views), name);
     markSyncSuccess(S);
     return 'ok';
   } catch (err) {
     markSyncFailure(S, err);
     return 'failed';
   }
+}
+
+/* Owner-side healing for pending invitees (AC1): the owner's hydrate
+   re-resolves pending doc.members entries via the RPC; once the invited
+   person has signed in, their authUserId is stamped (entry patched in
+   place, pending key deleted) and the workspace_members row is inserted
+   — RLS only lets the OWNER insert membership rows, so this heals on the
+   owner's client. Best-effort per entry: a failing lookup or insert
+   leaves the entry pending for the next hydrate. A 23505 duplicate row
+   is tolerated (the doc entry was missing, the row already existed —
+   heals the partial-invite window). Returns whether anything changed.
+   The owner's own entry gains its authUserId here too — the chat DM
+   identity bridge for members. */
+export async function promotePendingMembers(client, wsId, members, ownerMemberId, ownerUid) {
+  let changed = false;
+  const owner = (members || []).find(m => m && m.id === ownerMemberId);
+  if (owner && !owner.authUserId && ownerUid) {
+    owner.authUserId = ownerUid;
+    changed = true;
+  }
+  const pending = (members || []).filter(m => m && m.pending && !m.authUserId && m.email);
+  for (const m of pending) {
+    let uid;
+    try {
+      uid = await findAuthUserId(client, m.email);
+    } catch {
+      continue; /* rpc unavailable: retry on the next hydrate */
+    }
+    if (!uid) continue; /* still not on the platform */
+    try {
+      const ins = await client.from('workspace_members').insert({ workspace_id: wsId, user_id: uid }).select();
+      if (ins.error && ins.error.code !== '23505') continue;
+    } catch {
+      continue;
+    }
+    changed = applyPendingResolution(m, uid) || changed;
+  }
+  return changed;
 }
 
 export function markSyncFailure(S, err, fallback) {
