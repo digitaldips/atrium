@@ -52,6 +52,7 @@ import './actions/crm.js';
 import './actions/events.js';
 import './actions/google.js';
 import './actions/agentic.js';
+import './actions/paperclip.js';
 import './actions/linkage.js';
 import './actions/notes.js';
 import './actions/mail.js';
