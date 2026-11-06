@@ -77,7 +77,8 @@ function approvalsBody(pc) {
     emptyText: 'Paperclip posts approval requests here when agents need a board decision.',
     renderOk: () => `<div class="panel" style="padding:4px">${pc.approvals.items
       .map(a => {
-        const armed = confirm && confirm.id === a.id;
+        const armedApprove = confirm && confirm.id === a.id && confirm.decision === 'approve';
+        const armedDeny = confirm && confirm.id === a.id && confirm.decision === 'deny';
         return `<div class="srow">
         <div style="min-width:0">
           <div class="t">${esc(a.summary)}</div>
@@ -85,15 +86,16 @@ function approvalsBody(pc) {
         </div>
         <div class="row" style="gap:6px">
           ${
-            armed
-              ? `<button class="btn btn-primary btn-sm" data-a="pcApprove" data-id="${esc(a.id)}">${ic('check', 13)}Confirm</button><button class="btn btn-secondary btn-sm" data-a="pcConfirmReset">Cancel</button>`
+            armedApprove
+              ? `<button class="btn btn-primary btn-sm" data-a="pcApprove" data-id="${esc(a.id)}">${ic('check', 13)}Confirm</button>`
               : `<button class="btn btn-primary btn-sm" data-a="pcArmApprove" data-id="${esc(a.id)}">${ic('check', 13)}Approve</button>`
           }
           ${
-            armed
+            armedDeny
               ? `<button class="btn btn-danger btn-sm" data-a="pcDeny" data-id="${esc(a.id)}">${ic('x', 13)}Confirm deny</button>`
               : `<button class="btn btn-danger-ghost btn-sm" data-a="pcArmDeny" data-id="${esc(a.id)}">${ic('x', 13)}Deny</button>`
           }
+          ${armedApprove || armedDeny ? `<button class="btn btn-secondary btn-sm" data-a="pcConfirmReset" data-id="${esc(a.id)}">Cancel</button>` : ''}
         </div>
       </div>`;
       })
